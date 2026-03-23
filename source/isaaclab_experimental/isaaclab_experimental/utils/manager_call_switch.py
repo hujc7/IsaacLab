@@ -206,7 +206,7 @@ class ManagerCallSwitch:
         return call["fn"](*call.get("args", ()), **call.get("kwargs", {}))
 
     def _wp_capture_or_launch(self, stage: str, call: dict[str, Any]) -> Any:
-        """Capture Warp CUDA graph on first call, then replay.
+        """Capture Warp CUDA graph for a stage on first call, then replay.
 
         Delegates to :class:`WarpGraphCache` which handles warm-up, capture,
         caching the return value, and replay.

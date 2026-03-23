@@ -24,6 +24,7 @@ Notes:
 
 from __future__ import annotations
 
+import torch
 import warp as wp
 
 from isaaclab.assets import Articulation
@@ -582,3 +583,167 @@ def reset_joints_by_scale(
     # Sync derived buffers (_previous_joint_vel, joint_acc) for reset envs.
     asset.write_joint_position_to_sim_mask(position=asset.data.joint_pos, env_mask=env_mask)
     asset.write_joint_velocity_to_sim_mask(velocity=asset.data.joint_vel, env_mask=env_mask)
+
+
+# ---------------------------------------------------------------------------
+# Reset root state from terrain (flat-patch-aware)
+# ---------------------------------------------------------------------------
+
+
+@wp.kernel
+def _reset_root_state_from_terrain_kernel(
+    env_mask: wp.array(dtype=wp.bool),
+    rng_state: wp.array(dtype=wp.uint32),
+    # Terrain data
+    valid_positions: wp.array(dtype=wp.vec3f, ndim=3),  # (num_levels, num_types, num_patches)
+    terrain_levels: wp.array(dtype=wp.int32),
+    terrain_types: wp.array(dtype=wp.int32),
+    num_patches: wp.int32,
+    # Asset defaults
+    default_root_pose: wp.array(dtype=wp.transformf),
+    default_root_vel: wp.array(dtype=wp.spatial_vectorf),
+    # Outputs
+    pose_out: wp.array(dtype=wp.transformf),
+    vel_out: wp.array(dtype=wp.spatial_vectorf),
+    # Orientation ranges (roll, pitch, yaw)
+    rot_lo: wp.vec3f,
+    rot_hi: wp.vec3f,
+    # Velocity ranges
+    vel_lin_lo: wp.vec3f,
+    vel_lin_hi: wp.vec3f,
+    vel_ang_lo: wp.vec3f,
+    vel_ang_hi: wp.vec3f,
+):
+    env_id = wp.tid()
+    if not env_mask[env_id]:
+        return
+
+    state = rng_state[env_id]
+
+    # --- Position: sample from flat patches ---
+    level = terrain_levels[env_id]
+    ttype = terrain_types[env_id]
+    patch_id = wp.randi(state, 0, num_patches)
+    patch_pos = valid_positions[level, ttype, patch_id]
+
+    default_pose = default_root_pose[env_id]
+    default_pos = wp.transform_get_translation(default_pose)
+
+    pos = wp.vec3f(
+        patch_pos[0] + default_pos[0],
+        patch_pos[1] + default_pos[1],
+        patch_pos[2] + default_pos[2],
+    )
+
+    # --- Orientation: default * random delta(roll, pitch, yaw) ---
+    default_q = wp.transform_get_rotation(default_pose)
+    roll = wp.randf(state, rot_lo[0], rot_hi[0])
+    pitch = wp.randf(state, rot_lo[1], rot_hi[1])
+    yaw = wp.randf(state, rot_lo[2], rot_hi[2])
+    qx = wp.quat_from_axis_angle(wp.vec3f(1.0, 0.0, 0.0), roll)
+    qy = wp.quat_from_axis_angle(wp.vec3f(0.0, 1.0, 0.0), pitch)
+    qz = wp.quat_from_axis_angle(wp.vec3f(0.0, 0.0, 1.0), yaw)
+    delta_q = wp.mul(wp.mul(qz, qy), qx)
+    final_q = wp.mul(default_q, delta_q)
+
+    pose_out[env_id] = wp.transformf(pos, final_q)
+
+    # --- Velocity ---
+    default_vel = default_root_vel[env_id]
+    vel_out[env_id] = wp.spatial_vectorf(
+        default_vel[0] + wp.randf(state, vel_lin_lo[0], vel_lin_hi[0]),
+        default_vel[1] + wp.randf(state, vel_lin_lo[1], vel_lin_hi[1]),
+        default_vel[2] + wp.randf(state, vel_lin_lo[2], vel_lin_hi[2]),
+        default_vel[3] + wp.randf(state, vel_ang_lo[0], vel_ang_hi[0]),
+        default_vel[4] + wp.randf(state, vel_ang_lo[1], vel_ang_hi[1]),
+        default_vel[5] + wp.randf(state, vel_ang_lo[2], vel_ang_hi[2]),
+    )
+
+    rng_state[env_id] = state
+
+
+def reset_root_state_from_terrain(
+    env,
+    env_mask: wp.array,
+    pose_range: dict[str, tuple[float, float]],
+    velocity_range: dict[str, tuple[float, float]],
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    """Reset the asset root state by sampling a random valid pose from pre-computed flat patches.
+
+    Warp-first override of :func:`isaaclab.envs.mdp.events.reset_root_state_from_terrain`.
+
+    Raises:
+        ValueError: If the terrain does not have valid flat patches under the key ``"init_pos"``.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    # First-call: cache warp arrays and parse range dicts
+    if not hasattr(reset_root_state_from_terrain, "_scratch_pose"):
+        terrain = env.scene.terrain
+
+        valid_positions = terrain.flat_patches.get("init_pos")
+        if valid_positions is None:
+            raise ValueError(
+                "reset_root_state_from_terrain requires flat patches under 'init_pos'. "
+                f"Found: {list(terrain.flat_patches.keys())}"
+            )
+
+        # Convert flat_patches to warp vec3f array (num_rows, num_cols, num_patches)
+        reset_root_state_from_terrain._valid_positions_wp = wp.from_torch(valid_positions.contiguous(), dtype=wp.vec3f)
+        # Convert terrain level/type assignments to warp int32 arrays.
+        # terrain_levels/types are torch int64 — cast to int32 once during init.
+        # Use warp.copy to avoid wp.synchronize() which is forbidden during CUDA graph capture.
+        n_envs = terrain.terrain_levels.shape[0]
+        reset_root_state_from_terrain._terrain_levels_wp = wp.zeros(n_envs, dtype=wp.int32, device=env.device)
+        reset_root_state_from_terrain._terrain_types_wp = wp.zeros(n_envs, dtype=wp.int32, device=env.device)
+        levels_i32 = terrain.terrain_levels.to(dtype=torch.int32, copy=True).contiguous()
+        types_i32 = terrain.terrain_types.to(dtype=torch.int32, copy=True).contiguous()
+        wp.copy(reset_root_state_from_terrain._terrain_levels_wp, wp.from_torch(levels_i32, dtype=wp.int32))
+        wp.copy(reset_root_state_from_terrain._terrain_types_wp, wp.from_torch(types_i32, dtype=wp.int32))
+        reset_root_state_from_terrain._num_patches = valid_positions.shape[2]
+
+        # Scratch buffers
+        reset_root_state_from_terrain._scratch_pose = wp.zeros((env.num_envs,), dtype=wp.transformf, device=env.device)
+        reset_root_state_from_terrain._scratch_vel = wp.zeros(
+            (env.num_envs,), dtype=wp.spatial_vectorf, device=env.device
+        )
+
+        # Pre-parse orientation range (roll, pitch, yaw)
+        r = [pose_range.get(key, (0.0, 0.0)) for key in ["roll", "pitch", "yaw"]]
+        reset_root_state_from_terrain._rot_lo = wp.vec3f(r[0][0], r[1][0], r[2][0])
+        reset_root_state_from_terrain._rot_hi = wp.vec3f(r[0][1], r[1][1], r[2][1])
+
+        # Pre-parse velocity range
+        v = [velocity_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
+        reset_root_state_from_terrain._vel_lin_lo = wp.vec3f(v[0][0], v[1][0], v[2][0])
+        reset_root_state_from_terrain._vel_lin_hi = wp.vec3f(v[0][1], v[1][1], v[2][1])
+        reset_root_state_from_terrain._vel_ang_lo = wp.vec3f(v[3][0], v[4][0], v[5][0])
+        reset_root_state_from_terrain._vel_ang_hi = wp.vec3f(v[3][1], v[4][1], v[5][1])
+
+    wp.launch(
+        kernel=_reset_root_state_from_terrain_kernel,
+        dim=env.num_envs,
+        inputs=[
+            env_mask,
+            env.rng_state_wp,
+            reset_root_state_from_terrain._valid_positions_wp,
+            reset_root_state_from_terrain._terrain_levels_wp,
+            reset_root_state_from_terrain._terrain_types_wp,
+            reset_root_state_from_terrain._num_patches,
+            asset.data.default_root_pose,
+            asset.data.default_root_vel,
+            reset_root_state_from_terrain._scratch_pose,
+            reset_root_state_from_terrain._scratch_vel,
+            reset_root_state_from_terrain._rot_lo,
+            reset_root_state_from_terrain._rot_hi,
+            reset_root_state_from_terrain._vel_lin_lo,
+            reset_root_state_from_terrain._vel_lin_hi,
+            reset_root_state_from_terrain._vel_ang_lo,
+            reset_root_state_from_terrain._vel_ang_hi,
+        ],
+        device=env.device,
+    )
+
+    asset.write_root_pose_to_sim_mask(root_pose=reset_root_state_from_terrain._scratch_pose, env_mask=env_mask)
+    asset.write_root_velocity_to_sim_mask(root_velocity=reset_root_state_from_terrain._scratch_vel, env_mask=env_mask)

@@ -10,6 +10,7 @@ from isaaclab_experimental.managers import ObservationTermCfg as ObsTerm
 from isaaclab_experimental.managers import RewardTermCfg as RewTerm
 from isaaclab_experimental.managers import SceneEntityCfg
 from isaaclab_experimental.managers import TerminationTermCfg as DoneTerm
+from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
@@ -19,7 +20,8 @@ from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg
-from isaaclab.terrains import TerrainImporterCfg
+from isaaclab.sim import SimulationCfg
+from isaaclab.terrains import FlatPatchSamplingCfg, TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.noise import UniformNoiseCfg as Unoise
@@ -141,7 +143,7 @@ class ObservationsCfg:
 
 @configclass
 class EventCfg:
-    """Configuration for events."""
+    """Base event configuration with terms shared by rough and flat environments."""
 
     # FIXME(warp-migration): COM randomization in exp manager-based locomotion currently causes
     #  NaNs and is temporarily disabled.
@@ -166,22 +168,6 @@ class EventCfg:
         },
     )
 
-    reset_base = EventTerm(
-        func=mdp.reset_root_state_uniform,
-        mode="reset",
-        params={
-            "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-3.14, 3.14)},
-            "velocity_range": {
-                "x": (-0.5, 0.5),
-                "y": (-0.5, 0.5),
-                "z": (-0.5, 0.5),
-                "roll": (-0.5, 0.5),
-                "pitch": (-0.5, 0.5),
-                "yaw": (-0.5, 0.5),
-            },
-        },
-    )
-
     reset_robot_joints = EventTerm(
         func=mdp.reset_joints_by_scale,
         mode="reset",
@@ -197,6 +183,48 @@ class EventCfg:
         mode="interval",
         interval_range_s=(10.0, 15.0),
         params={"velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5)}},
+    )
+
+
+@configclass
+class RoughEventCfg(EventCfg):
+    """Rough terrain events: terrain-aware reset."""
+
+    reset_base = EventTerm(
+        func=mdp.reset_root_state_from_terrain,
+        mode="reset",
+        params={
+            "pose_range": {"yaw": (-3.14, 3.14)},
+            "velocity_range": {
+                "x": (-0.1, 0.1),
+                "y": (-0.1, 0.1),
+                "z": (-0.1, 0.1),
+                "roll": (-0.1, 0.1),
+                "pitch": (-0.1, 0.1),
+                "yaw": (-0.1, 0.1),
+            },
+        },
+    )
+
+
+@configclass
+class FlatEventCfg(EventCfg):
+    """Flat terrain events: uniform reset."""
+
+    reset_base = EventTerm(
+        func=mdp.reset_root_state_uniform,
+        mode="reset",
+        params={
+            "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-3.14, 3.14)},
+            "velocity_range": {
+                "x": (-0.1, 0.1),
+                "y": (-0.1, 0.1),
+                "z": (-0.1, 0.1),
+                "roll": (-0.1, 0.1),
+                "pitch": (-0.1, 0.1),
+                "yaw": (-0.1, 0.1),
+            },
+        },
     )
 
 
@@ -255,13 +283,34 @@ class CurriculumCfg:
 
 
 ##
-# Environment configuration
+# Environment configurations
 ##
 
 
 @configclass
-class LocomotionVelocityRoughEnvCfg(ManagerBasedRLEnvCfg):
-    """Configuration for the locomotion velocity-tracking environment."""
+class LocomotionVelocityBaseEnvCfg(ManagerBasedRLEnvCfg):
+    """Base configuration shared by rough and flat locomotion velocity environments.
+
+    Contains shared Newton sim settings, scene, observations, actions, commands,
+    rewards, and terminations. Terrain-specific events and curriculum are set
+    by the Rough and Flat subclasses.
+    """
+
+    # Newton sim config — matches stable ANYmal Newton presets (elliptic cone, implicitfast).
+    # Rough subclass overrides use_mujoco_contacts and buffer sizes.
+    sim: SimulationCfg = SimulationCfg(
+        physics=NewtonCfg(
+            solver_cfg=MJWarpSolverCfg(
+                njmax=60,
+                nconmax=25,
+                cone="elliptic",
+                impratio=100.0,
+                integrator="implicitfast",
+            ),
+            num_substeps=1,
+            debug_mode=False,
+        )
+    )
 
     # Scene settings
     scene: MySceneCfg = MySceneCfg(num_envs=4096, env_spacing=2.5, replicate_physics=True)
@@ -272,8 +321,6 @@ class LocomotionVelocityRoughEnvCfg(ManagerBasedRLEnvCfg):
     # MDP settings
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
-    events: EventCfg = EventCfg()
-    curriculum: CurriculumCfg = CurriculumCfg()
 
     def __post_init__(self):
         """Post initialization."""
@@ -287,10 +334,71 @@ class LocomotionVelocityRoughEnvCfg(ManagerBasedRLEnvCfg):
         # update sensor update periods
         if self.scene.contact_forces is not None:
             self.scene.contact_forces.update_period = self.sim.dt
-        # check if terrain levels curriculum is enabled
+
+
+@configclass
+class LocomotionVelocityRoughEnvCfg(LocomotionVelocityBaseEnvCfg):
+    """Rough terrain locomotion velocity environment.
+
+    Adds terrain-aware reset events, terrain curriculum, and rough-terrain
+    buffer sizes (njmax/nconmax).
+    """
+
+    # Events and curriculum
+    events: RoughEventCfg = RoughEventCfg()
+    curriculum: CurriculumCfg = CurriculumCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Rough terrain: use Newton collision pipeline (mesh terrain not supported by MuJoCo contacts)
+        self.sim.physics.solver_cfg.use_mujoco_contacts = False
+        # Rough terrain buffer sizes (profiled: njmax peak 162 with margin fix, nconmax ~78 at 4096 envs)
+        self.sim.physics.solver_cfg.njmax = 200
+        self.sim.physics.solver_cfg.nconmax = 100
+        # Increase CCD iterations: default 35 can be insufficient for mesh terrain narrow phase,
+        # causing unconverged GJK/EPA results that produce NaN in body_q/joint_q.
+        self.sim.physics.solver_cfg.ccd_iterations = 100
+        # Pyramidal cone is more robust than elliptic for mesh terrain contacts (MuJoCo docs).
+        # Elliptic + high impratio causes solver divergence in ~1/4000 envs.
+        self.sim.physics.solver_cfg.cone = "pyramidal"
+        self.sim.physics.solver_cfg.impratio = 1.0
+        # Enable terrain curriculum if configured
         if getattr(self.curriculum, "terrain_levels", None) is not None:
             if self.scene.terrain.terrain_generator is not None:
                 self.scene.terrain.terrain_generator.curriculum = True
         else:
             if self.scene.terrain.terrain_generator is not None:
                 self.scene.terrain.terrain_generator.curriculum = False
+        # Add flat patch sampling to all sub-terrains for safe spawning via reset_root_state_from_terrain
+        if self.scene.terrain.terrain_generator is not None:
+            init_patch_cfg = FlatPatchSamplingCfg(num_patches=10, patch_radius=[0.5, 0.3], max_height_diff=0.05)
+            for sub_cfg in self.scene.terrain.terrain_generator.sub_terrains.values():
+                if sub_cfg.flat_patch_sampling is None:
+                    sub_cfg.flat_patch_sampling = {"init_pos": init_patch_cfg}
+
+
+@configclass
+class LocomotionVelocityFlatEnvCfg(LocomotionVelocityBaseEnvCfg):
+    """Flat terrain locomotion velocity environment.
+
+    Uses uniform reset, flat-terrain reward weights, and smaller solver buffers.
+    """
+
+    # Events and curriculum
+    events: FlatEventCfg = FlatEventCfg()
+    curriculum: CurriculumCfg = CurriculumCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Flat terrain solver buffer sizes (much simpler contact patterns)
+        self.sim.physics.solver_cfg.njmax = 60
+        self.sim.physics.solver_cfg.nconmax = 25
+        # Flat terrain: plane, no generator
+        self.scene.terrain.terrain_type = "plane"
+        self.scene.terrain.terrain_generator = None
+        # No terrain curriculum
+        self.curriculum.terrain_levels = None
+        # Flat terrain reward weight overrides
+        self.rewards.flat_orientation_l2.weight = -5.0
+        self.rewards.dof_torques_l2.weight = -2.5e-5
+        self.rewards.feet_air_time.weight = 0.5
