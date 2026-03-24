@@ -289,9 +289,10 @@ class NewtonManager(PhysicsManager):
         logger.info(f"Finalizing model on device: {device}")
         cls._builder.up_axis = Axis.from_string(cls._up_axis)
 
-        # Fix: zero shape margin causes CCD to use the is_discrete path (epsilon=0),
-        # where GJK can fail to converge on mesh terrain, producing NaN in body_q/joint_q.
-        # Enforce a minimum margin on all shapes before finalize.
+        # WAR: USD import produces shapes with zero contact margin. Zero margin causes
+        # CCD to use the is_discrete path (epsilon=0), where GJK fails to converge on
+        # mesh terrain, producing NaN in body_q/joint_q.
+        # TODO: file upstream Newton issue for USD importer zero-margin default.
         contact_margin = 0.01
         n_margin_fixed = 0
         for i in range(len(cls._builder.shape_margin)):
@@ -411,6 +412,9 @@ class NewtonManager(PhysicsManager):
         if cls._needs_collision_pipeline:
             # Newton collision pipeline: create pipeline and generate contacts
             if cls._collision_pipeline is None:
+                # WAR: default max_triangle_pairs (1M) overflows with mesh terrain at
+                # 4096+ envs (~2M triangle pairs). Overflow silently drops contacts.
+                # No upstream issue tracking auto-sizing yet.
                 cls._collision_pipeline = CollisionPipeline(
                     cls._model, broad_phase="explicit", max_triangle_pairs=2_000_000
                 )

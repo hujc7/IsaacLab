@@ -25,9 +25,11 @@ from isaaclab_assets.robots.anymal import ANYMAL_D_CFG  # isort: skip
 @configclass
 class RoughPhysicsCfg(PresetCfg):
     default = PhysxCfg(gpu_max_rigid_patch_count=10 * 2**15)
-    # Rough terrain requires pyramidal cone (elliptic diverges in float32 with many mesh
-    # contacts — see mujoco_warp#942) and Newton collision pipeline (use_mujoco_contacts=False)
-    # since MuJoCo's built-in collision does not support mesh terrain geometry.
+    # WAR: Rough terrain requires pyramidal cone — elliptic cone + high impratio diverges
+    # in float32 with many mesh contacts due to MuJoCo Warp single-precision limitations.
+    # Upstream (open): https://github.com/google-deepmind/mujoco_warp/issues/1000
+    # Also uses Newton collision pipeline (use_mujoco_contacts=False) since MuJoCo's
+    # built-in collision does not support mesh terrain geometry.
     newton = NewtonCfg(
         solver_cfg=MJWarpSolverCfg(
             njmax=200,
