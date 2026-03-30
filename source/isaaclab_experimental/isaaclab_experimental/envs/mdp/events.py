@@ -77,11 +77,12 @@ def randomize_rigid_body_com(
     asset: Articulation = env.scene[asset_cfg.name]
 
     fn = randomize_rigid_body_com
-    if not hasattr(fn, "_com_lo") or fn._asset_name != asset_cfg.name:
+    if not getattr(fn, "_is_warmed_up", False) or fn._asset_name != asset_cfg.name:
         fn._asset_name = asset_cfg.name
         r = [com_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z"]]
         fn._com_lo = wp.vec3f(r[0][0], r[1][0], r[2][0])
         fn._com_hi = wp.vec3f(r[0][1], r[1][1], r[2][1])
+        fn._is_warmed_up = True
 
     wp.launch(
         kernel=_randomize_com_kernel,
@@ -154,13 +155,14 @@ def apply_external_force_torque(
     asset: Articulation = env.scene[asset_cfg.name]
 
     # First-call: allocate scratch and pre-convert constant arguments.
-    if not hasattr(apply_external_force_torque, "_scratch_forces"):
+    if not getattr(apply_external_force_torque, "_is_warmed_up", False):
         apply_external_force_torque._scratch_forces = wp.zeros(
             (env.num_envs, asset.num_bodies), dtype=wp.vec3f, device=env.device
         )
         apply_external_force_torque._scratch_torques = wp.zeros(
             (env.num_envs, asset.num_bodies), dtype=wp.vec3f, device=env.device
         )
+        apply_external_force_torque._is_warmed_up = True
 
     wp.launch(
         kernel=_apply_external_force_torque_kernel,
@@ -233,13 +235,14 @@ def push_by_setting_velocity(
     asset: Articulation = env.scene[asset_cfg.name]
 
     # First-call: allocate scratch and pre-parse constant range arguments.
-    if not hasattr(push_by_setting_velocity, "_scratch_vel"):
+    if not getattr(push_by_setting_velocity, "_is_warmed_up", False):
         push_by_setting_velocity._scratch_vel = wp.zeros((env.num_envs,), dtype=wp.spatial_vectorf, device=env.device)
         r = [velocity_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
         push_by_setting_velocity._lin_lo = wp.vec3f(r[0][0], r[1][0], r[2][0])
         push_by_setting_velocity._lin_hi = wp.vec3f(r[0][1], r[1][1], r[2][1])
         push_by_setting_velocity._ang_lo = wp.vec3f(r[3][0], r[4][0], r[5][0])
         push_by_setting_velocity._ang_hi = wp.vec3f(r[3][1], r[4][1], r[5][1])
+        push_by_setting_velocity._is_warmed_up = True
 
     wp.launch(
         kernel=_push_by_setting_velocity_kernel,
@@ -343,7 +346,7 @@ def reset_root_state_uniform(
     asset: Articulation = env.scene[asset_cfg.name]
 
     # First-call: allocate scratch and pre-parse range dicts.
-    if not hasattr(reset_root_state_uniform, "_scratch_pose"):
+    if not getattr(reset_root_state_uniform, "_is_warmed_up", False):
         reset_root_state_uniform._scratch_pose = wp.zeros((env.num_envs,), dtype=wp.transformf, device=env.device)
         reset_root_state_uniform._scratch_vel = wp.zeros((env.num_envs,), dtype=wp.spatial_vectorf, device=env.device)
         # Pre-parse pose_range dict
@@ -358,6 +361,7 @@ def reset_root_state_uniform(
         reset_root_state_uniform._vel_lin_hi = wp.vec3f(v[0][1], v[1][1], v[2][1])
         reset_root_state_uniform._vel_ang_lo = wp.vec3f(v[3][0], v[4][0], v[5][0])
         reset_root_state_uniform._vel_ang_hi = wp.vec3f(v[3][1], v[4][1], v[5][1])
+        reset_root_state_uniform._is_warmed_up = True
 
     wp.launch(
         kernel=_reset_root_state_uniform_kernel,

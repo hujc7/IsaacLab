@@ -37,8 +37,7 @@ def terrain_out_of_bounds(
 ) -> None:
     """Terminate when the actor moves too close to the edge of the terrain."""
     fn = terrain_out_of_bounds
-    if not hasattr(fn, "_terrain_resolved"):
-        fn._terrain_resolved = True
+    if not getattr(fn, "_is_warmed_up", False):
         terrain_type = env.scene.cfg.terrain.terrain_type
         if terrain_type == "plane":
             fn._is_plane = True
@@ -52,6 +51,7 @@ def terrain_out_of_bounds(
             fn._half_height = 0.5 * (n_cols * grid_length + 2 * border_width)
         else:
             raise ValueError("Received unsupported terrain type, must be either 'plane' or 'generator'.")
+        fn._is_warmed_up = True
 
     if fn._is_plane:
         out.zero_()

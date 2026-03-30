@@ -205,8 +205,8 @@ class MockArticulationData:
         vel_np[:, 3:] = ang_vel_w_np
         self.root_com_vel_w = wp.array(vel_np, dtype=wp.spatial_vectorf, device=device)
 
-        # Gravity direction constant
-        self.GRAVITY_VEC_W = wp.vec3f(0.0, 0.0, -1.0)
+        # Gravity direction constant (1D array to match kernel signatures)
+        self.GRAVITY_VEC_W = wp.array([0.0, 0.0, -1.0], dtype=wp.vec3f, device=device)
 
         # Derived body-frame quantities (consistent with Tier 1 compounds)
         self.root_lin_vel_b = wp.array(quat_rotate_inv_np(quat_np, lin_vel_w_np), dtype=wp.vec3f, device=device)
@@ -266,6 +266,13 @@ class MockArticulationData:
         return wp.array(mask, dtype=wp.bool, device=str(self.joint_pos.device))
 
 
+class MockWrenchComposer:
+    """Mock wrench composer with no-op methods."""
+
+    def set_forces_and_torques_mask(self, *a, **kw):
+        pass
+
+
 class MockArticulation:
     """Mock articulation asset with simulation write stubs.
 
@@ -280,6 +287,7 @@ class MockArticulation:
         self.num_joints = num_joints
         self.device = DEVICE
         self._joint_names = [f"joint_{i}" for i in range(num_joints)]
+        self.permanent_wrench_composer = MockWrenchComposer()
         # Tracking attributes for action tests
         self.last_pos_target = None
         self.last_vel_target = None
@@ -291,10 +299,22 @@ class MockArticulation:
     def write_root_velocity_to_sim(self, *a, **kw):
         pass
 
+    def write_root_velocity_to_sim_mask(self, *a, **kw):
+        pass
+
     def write_root_pose_to_sim(self, *a, **kw):
         pass
 
+    def write_root_pose_to_sim_mask(self, *a, **kw):
+        pass
+
     def write_joint_state_to_sim(self, *a, **kw):
+        pass
+
+    def write_joint_position_to_sim_mask(self, *a, **kw):
+        pass
+
+    def write_joint_velocity_to_sim_mask(self, *a, **kw):
         pass
 
     def set_external_force_and_torque(self, *a, **kw):
@@ -313,6 +333,9 @@ class MockArticulation:
     def set_joint_effort_target(self, target, joint_ids=None, joint_mask=None):
         self.last_effort_target = target
         self.last_joint_mask = joint_mask
+
+    def set_joint_position_target_index(self, target, joint_ids=None):
+        self.last_pos_target = target
 
     def set_joint_effort_target_index(self, target, joint_ids=None):
         self.last_effort_target = target

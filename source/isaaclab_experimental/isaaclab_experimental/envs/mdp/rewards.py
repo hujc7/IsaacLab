@@ -417,13 +417,14 @@ def track_lin_vel_xy_exp(
     # cache the warp view of the command tensor on first call (zero-copy)
     # TODO(warp-migration): Cross-manager access (reward → command). Replace with direct
     #  warp getter once all managers are guaranteed to be warp-native.
-    if not hasattr(track_lin_vel_xy_exp, "_cmd_wp") or track_lin_vel_xy_exp._cmd_name != command_name:
+    if not getattr(track_lin_vel_xy_exp, "_is_warmed_up", False) or track_lin_vel_xy_exp._cmd_name != command_name:
         cmd = env.command_manager.get_command(command_name)
         if isinstance(cmd, wp.array):
             track_lin_vel_xy_exp._cmd_wp = cmd
         else:
             track_lin_vel_xy_exp._cmd_wp = wp.from_torch(cmd)
         track_lin_vel_xy_exp._cmd_name = command_name
+        track_lin_vel_xy_exp._is_warmed_up = True
     wp.launch(
         kernel=_track_lin_vel_xy_exp_kernel,
         dim=env.num_envs,
@@ -466,13 +467,14 @@ def track_ang_vel_z_exp(
     asset: Articulation = env.scene[asset_cfg.name]
     # TODO(warp-migration): Cross-manager access (reward → command). Replace with direct
     #  warp getter once all managers are guaranteed to be warp-native.
-    if not hasattr(track_ang_vel_z_exp, "_cmd_wp") or track_ang_vel_z_exp._cmd_name != command_name:
+    if not getattr(track_ang_vel_z_exp, "_is_warmed_up", False) or track_ang_vel_z_exp._cmd_name != command_name:
         cmd = env.command_manager.get_command(command_name)
         if isinstance(cmd, wp.array):
             track_ang_vel_z_exp._cmd_wp = cmd
         else:
             track_ang_vel_z_exp._cmd_wp = wp.from_torch(cmd)
         track_ang_vel_z_exp._cmd_name = command_name
+        track_ang_vel_z_exp._is_warmed_up = True
     wp.launch(
         kernel=_track_ang_vel_z_exp_kernel,
         dim=env.num_envs,
