@@ -679,7 +679,7 @@ def reset_root_state_from_terrain(
     asset: Articulation = env.scene[asset_cfg.name]
 
     # First-call: cache warp arrays and parse range dicts
-    if not hasattr(reset_root_state_from_terrain, "_scratch_pose"):
+    if not getattr(reset_root_state_from_terrain, "_is_warmed_up", False):
         terrain = env.scene.terrain
 
         valid_positions = terrain.flat_patches.get("init_pos")
@@ -720,6 +720,7 @@ def reset_root_state_from_terrain(
         reset_root_state_from_terrain._vel_lin_hi = wp.vec3f(v[0][1], v[1][1], v[2][1])
         reset_root_state_from_terrain._vel_ang_lo = wp.vec3f(v[3][0], v[4][0], v[5][0])
         reset_root_state_from_terrain._vel_ang_hi = wp.vec3f(v[3][1], v[4][1], v[5][1])
+        reset_root_state_from_terrain._is_warmed_up = True
 
     wp.launch(
         kernel=_reset_root_state_from_terrain_kernel,
