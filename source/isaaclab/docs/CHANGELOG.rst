@@ -1,6 +1,30 @@
 Changelog
 ---------
 
+4.5.28 (2026-04-09)
+~~~~~~~~~~~~~~~~~~~
+
+Changed
+^^^^^^^
+
+* Changed :class:`~isaaclab.sensors.RayCaster` to spawn its own non-physics Xform prim via
+  the new :attr:`~isaaclab.sensors.RayCasterCfg.spawn` attribute. ``prim_path`` should now
+  point to a child under the parent link (e.g. ``{ENV_REGEX_NS}/Robot/base/raycaster``).
+
+Deprecated
+^^^^^^^^^^
+
+* Deprecated passing a ``prim_path`` with ``ArticulationRootAPI`` or ``RigidBodyAPI`` to
+  :class:`~isaaclab.sensors.RayCasterCfg`. The path is automatically extended with
+  ``/raycaster``; users should migrate to the child-path convention.
+
+Removed
+^^^^^^^
+
+* Removed :attr:`~isaaclab.sensors.RayCasterCfg.attach_yaw_only` (deprecated since 2.1.1).
+  Use ``ray_alignment="yaw"`` or ``ray_alignment="base"`` instead.
+
+
 4.5.27 (2026-04-08)
 ~~~~~~~~~~~~~~~~~~~
 
