@@ -17,10 +17,9 @@ from packaging import version
 
 from pxr import Sdf, UsdGeom
 
-import isaaclab.sim as sim_utils
 import isaaclab.utils.sensors as sensor_utils
 from isaaclab.app.settings_manager import get_settings_manager
-from isaaclab.sim.views import XformPrimView
+from isaaclab.sim.views import FrameView
 from isaaclab.utils import has_kit, to_camel_case
 from isaaclab.utils.array import convert_to_torch
 from isaaclab.utils.math import (
@@ -152,36 +151,15 @@ class Camera(SensorBase):
         if simple_shading_mode is not None:
             settings.set_int(self.SIMPLE_SHADING_MODE_SETTING, simple_shading_mode)
 
-        # spawn the asset
-        if self.cfg.spawn is not None:
-            # Use spawn_path when set (points to template location for scene-cloned sensors).
-            # This allows the camera to be spawned inside the asset template (e.g. inside
-            # proto_asset_0) before clone_environments replicates it to all env paths.
-            spawn_target = (
-                self.cfg.spawn.spawn_path
-                if getattr(self.cfg.spawn, "spawn_path", None) is not None
-                else self.cfg.prim_path
-            )
-            # compute the rotation offset
-            rot = torch.tensor(self.cfg.offset.rot, dtype=torch.float32, device="cpu").unsqueeze(0)
-            rot_offset = convert_camera_frame_orientation_convention(
-                rot, origin=self.cfg.offset.convention, target="opengl"
-            )
-            rot_offset = rot_offset.squeeze(0).cpu().numpy()
-            # ensure vertical aperture is set, otherwise replace with default for squared pixels
-            if self.cfg.spawn.vertical_aperture is None:
-                self.cfg.spawn.vertical_aperture = self.cfg.spawn.horizontal_aperture * self.cfg.height / self.cfg.width
-            self.cfg.spawn.func(spawn_target, self.cfg.spawn, translation=self.cfg.offset.pos, orientation=rot_offset)
-        # check that spawn was successful; use spawn_path if set (template location) since env
-        # paths are not yet populated at init time — they are filled in by clone_environments.
-        check_path = (
-            self.cfg.spawn.spawn_path
-            if self.cfg.spawn is not None and getattr(self.cfg.spawn, "spawn_path", None) is not None
-            else self.cfg.prim_path
+        # Compute camera orientation (convention conversion) and spawn
+        rot = torch.tensor(self.cfg.offset.rot, dtype=torch.float32, device="cpu").unsqueeze(0)
+        rot_offset = convert_camera_frame_orientation_convention(
+            rot, origin=self.cfg.offset.convention, target="opengl"
         )
-        matching_prims = sim_utils.find_matching_prims(check_path)
-        if len(matching_prims) == 0:
-            raise RuntimeError(f"Could not find prim with path {check_path}.")
+        rot_offset = rot_offset.squeeze(0).cpu().numpy()
+        if self.cfg.spawn is not None and self.cfg.spawn.vertical_aperture is None:
+            self.cfg.spawn.vertical_aperture = self.cfg.spawn.horizontal_aperture * self.cfg.height / self.cfg.width
+        self._resolve_and_spawn("camera", translation=self.cfg.offset.pos, orientation=rot_offset)
 
         # UsdGeom Camera prim for the sensor
         self._sensor_prims: list[UsdGeom.Camera] = list()
@@ -376,7 +354,8 @@ class Camera(SensorBase):
         # convert torch tensors to warp arrays for the view
         pos_wp = wp.from_torch(positions.contiguous()) if positions is not None else None
         ori_wp = wp.from_torch(orientations.contiguous()) if orientations is not None else None
-        self._view.set_world_poses(pos_wp, ori_wp, env_ids)
+        idx_wp = wp.from_torch(env_ids.to(dtype=torch.int32), dtype=wp.int32) if env_ids is not None else None
+        self._view.set_world_poses(pos_wp, ori_wp, idx_wp)
 
     def set_world_poses_from_view(
         self, eyes: torch.Tensor, targets: torch.Tensor, env_ids: Sequence[int] | None = None
@@ -399,7 +378,8 @@ class Camera(SensorBase):
         up_axis = UsdGeom.GetStageUpAxis(self.stage)
         # set camera poses using the view
         orientations = quat_from_matrix(create_rotation_matrix_from_view(eyes, targets, up_axis, device=self._device))
-        self._view.set_world_poses(wp.from_torch(eyes.contiguous()), wp.from_torch(orientations.contiguous()), env_ids)
+        idx_wp = wp.from_torch(env_ids.to(dtype=torch.int32), dtype=wp.int32) if env_ids is not None else None
+        self._view.set_world_poses(wp.from_torch(eyes.contiguous()), wp.from_torch(orientations.contiguous()), idx_wp)
 
     """
     Operations
@@ -451,9 +431,7 @@ class Camera(SensorBase):
         # Initialize parent class
         super()._initialize_impl()
         # Create a view for the sensor with Fabric enabled for fast pose queries, otherwise position will be stale.
-        self._view = XformPrimView(
-            self.cfg.prim_path, device=self._device, stage=self.stage, sync_usd_on_fabric_write=True
-        )
+        self._view = FrameView(self.cfg.prim_path, device=self._device, stage=self.stage, sync_usd_on_fabric_write=True)
         # Check that sizes are correct
         if self._view.count != self._num_envs:
             raise RuntimeError(
@@ -694,7 +672,8 @@ class Camera(SensorBase):
             raise RuntimeError("Camera prim is None. Please call 'sim.play()' first.")
 
         # get the poses from the view (returns wp.array, convert to torch)
-        pos_wp, quat_wp = self._view.get_world_poses(env_ids)
+        indices = wp.from_torch(env_ids.to(dtype=torch.int32), dtype=wp.int32) if env_ids is not None else None
+        pos_wp, quat_wp = self._view.get_world_poses(indices)
         self._data.pos_w[env_ids] = wp.to_torch(pos_wp)
         self._data.quat_w_world[env_ids] = convert_camera_frame_orientation_convention(
             wp.to_torch(quat_wp), origin="opengl", target="world"

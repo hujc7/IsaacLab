@@ -17,7 +17,7 @@ from pxr import UsdGeom
 
 from isaaclab.app.settings_manager import get_settings_manager
 from isaaclab.renderers import Renderer
-from isaaclab.sim.views import XformPrimView
+from isaaclab.sim.views import FrameView
 
 from ..sensor_base import SensorBase
 from .camera import Camera
@@ -171,7 +171,7 @@ class TiledCamera(Camera):
         self.renderer.prepare_stage(self.stage, self._num_envs)
 
         # Create a view for the sensor
-        self._view = XformPrimView(self.cfg.prim_path, device=self._device, stage=self.stage)
+        self._view = FrameView(self.cfg.prim_path, device=self._device, stage=self.stage)
         # Check that sizes are correct
         if self._view.count != self._num_envs:
             raise RuntimeError(

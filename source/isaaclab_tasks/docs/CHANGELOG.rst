@@ -1,16 +1,14 @@
 Changelog
 ---------
 
-1.5.20 (2026-04-09)
+1.5.20 (2026-04-10)
 ~~~~~~~~~~~~~~~~~~~
 
 Changed
 ^^^^^^^
 
-* Updated locomotion :class:`~isaaclab.sensors.ray_caster.ray_caster_cfg.RayCasterCfg`
-  height-scanner defaults to spawn a ``raycaster`` Xform child under the robot attachment link
-  (using :class:`~isaaclab.sim.spawners.sensors.sensors_cfg.RayCasterXformCfg`) so the sensor
-  works with Newton site-based :class:`~isaaclab.sim.views.XformPrimView` tracking.
+* Updated all sensor configurations to use :class:`~isaaclab.sim.views.FrameView` instead of
+  the deprecated ``XformPrimView``.
 
 
 1.5.19 (2026-04-06)

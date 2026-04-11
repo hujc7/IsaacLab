@@ -1,6 +1,16 @@
 Changelog
 ---------
 
+0.5.15 (2026-04-10)
+~~~~~~~~~~~~~~~~~~~
+
+Changed
+^^^^^^^
+
+* Renamed :class:`~isaaclab_physx.sim.views.FabricXformPrimView` to
+  :class:`~isaaclab_physx.sim.views.FabricFrameView`. Old name is kept as a deprecated alias.
+
+
 0.5.14 (2026-04-05)
 ~~~~~~~~~~~~~~~~~~~
 

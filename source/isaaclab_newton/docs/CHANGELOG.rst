@@ -1,8 +1,14 @@
 Changelog
 ---------
 
-0.5.13 (2026-04-09)
+0.5.11 (2026-04-10)
 ~~~~~~~~~~~~~~~~~~~
+
+Changed
+^^^^^^^
+
+* Renamed :class:`~isaaclab_newton.sim.views.NewtonSiteXformPrimView` to
+  :class:`~isaaclab_newton.sim.views.NewtonSiteFrameView`. Old name is kept as a deprecated alias.
 
 Added
 ^^^^^
