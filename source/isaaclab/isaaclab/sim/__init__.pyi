@@ -94,8 +94,10 @@ __all__ = [
     "MeshCylinderCfg",
     "MeshSphereCfg",
     "spawn_camera",
+    "spawn_sensor_frame",
     "FisheyeCameraCfg",
     "PinholeCameraCfg",
+    "SensorFrameCfg",
     "spawn_capsule",
     "spawn_cone",
     "spawn_cuboid",
@@ -164,6 +166,10 @@ __all__ = [
     "resolve_prim_pose",
     "resolve_prim_scale",
     "convert_world_pose_to_local",
+    "BaseFrameView",
+    "UsdFrameView",
+    "FrameView",
+    # Deprecated alias
     "XformPrimView",
 ]
 
@@ -260,8 +266,10 @@ from .spawners import (
     MeshCylinderCfg,
     MeshSphereCfg,
     spawn_camera,
+    spawn_sensor_frame,
     FisheyeCameraCfg,
     PinholeCameraCfg,
+    SensorFrameCfg,
     spawn_capsule,
     spawn_cone,
     spawn_cuboid,
@@ -333,4 +341,5 @@ from .utils import (
     resolve_prim_scale,
     convert_world_pose_to_local,
 )
-from .views import XformPrimView
+from .views import BaseFrameView, UsdFrameView, FrameView
+from .views import XformPrimView  # deprecated alias
