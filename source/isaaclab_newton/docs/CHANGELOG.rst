@@ -1,6 +1,19 @@
 Changelog
 ---------
 
+0.5.14 (2026-04-16)
+~~~~~~~~~~~~~~~~~~~
+
+Fixed
+^^^^^
+
+* Fixed incorrect attribute name ``contact_margin`` on Newton
+  ``ShapeConfig`` in
+  :meth:`~isaaclab_newton.physics.NewtonManager.create_builder`. The
+  correct field is ``margin``. The typo created a dead attribute so the
+  intended 1 cm default shape margin was never applied.
+
+
 0.5.13 (2026-04-13)
 ~~~~~~~~~~~~~~~~~~~
 
