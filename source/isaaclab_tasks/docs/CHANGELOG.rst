@@ -1,6 +1,19 @@
 Changelog
 ---------
 
+1.5.22 (2026-04-16)
+~~~~~~~~~~~~~~~~~~~
+
+Added
+^^^^^
+
+* Added Newton rough terrain support for all remaining locomotion velocity
+  envs (Go1, Go2, A1, H1, Cassie, Anymal-B/C, G1, Digit).
+* Added Go1 Newton-only leg armature preset to improve rough-terrain training
+  stability.
+* Added Go2 Newton ``njmax``/``nconmax`` override to prevent constraint budget
+  overflow on rough terrain.
+
 1.5.21 (2026-04-13)
 ~~~~~~~~~~~~~~~~~~~
 
