@@ -84,7 +84,9 @@ def feet_slide(env, sensor_cfg: SceneEntityCfg, asset_cfg: SceneEntityCfg = Scen
     )
     asset = env.scene[asset_cfg.name]
 
-    body_vel = wp.to_torch(asset.data.body_lin_vel_w)[:, asset_cfg.body_ids, :2]
+    # Use sensor body count to slice asset velocities — ensures matching dimensions
+    # even when Newton reports duplicate body entries for closed-loop constraints.
+    body_vel = wp.to_torch(asset.data.body_lin_vel_w)[:, asset_cfg.body_ids[:contacts.shape[1]], :2]
     reward = torch.sum(body_vel.norm(dim=-1) * contacts, dim=1)
     return reward
 

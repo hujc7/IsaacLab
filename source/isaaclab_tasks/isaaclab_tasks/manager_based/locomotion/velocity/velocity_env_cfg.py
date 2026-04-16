@@ -60,6 +60,7 @@ class RoughPhysicsCfg(PresetCfg):
         collision_cfg=NewtonCollisionPipelineCfg(max_triangle_pairs=2_500_000),
         num_substeps=1,
         debug_mode=False,
+        default_shape_margin=0.01,
     )
     physx = default
 

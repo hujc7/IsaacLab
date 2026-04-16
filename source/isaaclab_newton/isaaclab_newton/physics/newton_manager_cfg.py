@@ -257,3 +257,14 @@ class NewtonCfg(PhysicsCfg):
     .. note::
         Must not be set when ``use_mujoco_contacts=True`` (raises :class:`ValueError`).
     """
+
+    default_shape_margin: float = 0.0
+    """Default shape collision margin [m] applied to all shapes.
+
+    Extends the effective collision surface outward by this amount. When two
+    shapes collide, their margins are summed (``margin_a + margin_b``) to
+    determine the total separation. A small positive value (e.g. 0.01)
+    improves contact quality on triangle-mesh terrain for lightweight robots.
+
+    Defaults to ``0.0`` (no margin).
+    """

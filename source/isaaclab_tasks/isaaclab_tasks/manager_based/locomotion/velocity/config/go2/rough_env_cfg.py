@@ -20,9 +20,6 @@ class UnitreeGo2RoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         # post init of parent
         super().__post_init__()
 
-        # Go2 needs higher njmax to avoid nefc overflow on rough terrain
-        self.sim.physics.newton.solver_cfg.njmax = 400
-        self.sim.physics.newton.solver_cfg.nconmax = 200
 
         self.scene.robot = UNITREE_GO2_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
         self.scene.height_scanner.prim_path = "{ENV_REGEX_NS}/Robot/base"
