@@ -1,6 +1,23 @@
 Changelog
 ---------
 
+1.5.31 (2026-04-29)
+~~~~~~~~~~~~~~~~~~~
+
+Added
+^^^^^
+
+* Added Newton backend support for the multi-agent
+  ``Isaac-Shadow-Hand-Over-Direct-v0`` (MAPPO/IPPO) env. Mirrors the
+  single-agent Shadow Hand Newton port: per-hand
+  :class:`ImplicitActuatorCfg`, ``shadow_hand_instanceable_newton.usd``,
+  per-backend :class:`~isaaclab_tasks.utils.PresetCfg` wrappers for sim
+  physics, scene cloning (``clone_in_fabric=False`` on Newton), the
+  hand-over object (``RigidObjectCfg`` on both backends, dropping
+  PhysX-only knobs on Newton), and the two robot configs. Selectable via
+  ``--preset newton`` / Hydra preset resolution; PhysX behavior unchanged.
+
+
 1.5.30 (2026-04-28)
 ~~~~~~~~~~~~~~~~~~~
 
