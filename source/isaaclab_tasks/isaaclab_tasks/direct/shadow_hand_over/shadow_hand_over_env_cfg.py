@@ -195,6 +195,18 @@ def _newton_shadow_hand_cfg(
                 friction=1e-2,
                 armature=2e-3,
             ),
+            # J0 distal joints are passive in PhysX (fixed tendon, limit_stiffness=30,
+            # damping=0.1). The Newton USD bakes stiffness=286/damping=57 from the
+            # MJCF translation, which fights the MjcTendon coupling and bounces the
+            # ball. Override with stiffness=10 (1/3 of PhysX limit_stiffness=30) so
+            # the tendon constraint dominates without going fully limp.
+            "distal_passive": ImplicitActuatorCfg(
+                joint_names_expr=["robot0_(FF|MF|RF|LF)J0"],
+                stiffness=10.0,
+                damping=0.1,
+                friction=1e-2,
+                armature=2e-3,
+            ),
         },
         soft_joint_pos_limit_factor=1.0,
     )
