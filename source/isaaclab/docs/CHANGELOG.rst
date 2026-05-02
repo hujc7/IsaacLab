@@ -1,6 +1,15 @@
 Changelog
 ---------
 
+4.6.26 (2026-05-02)
+~~~~~~~~~~~~~~~~~~~
+
+Fixed
+^^^^^
+
+* Test fragment to verify the nightly auto-compile workflow.
+
+
 4.6.25 (2026-04-28)
 ~~~~~~~~~~~~~~~~~~~
 
