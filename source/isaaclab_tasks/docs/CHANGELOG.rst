@@ -1,6 +1,15 @@
 Changelog
 ---------
 
+1.5.33 (2026-05-02)
+~~~~~~~~~~~~~~~~~~~
+
+Fixed
+^^^^^
+
+* Fixed termination reward in :class:`~isaaclab_tasks.manager_based.locomotion.velocity.LocomotionEnv` double-counting falls when contact masks overlapped.
+
+
 1.5.32 (2026-04-30)
 ~~~~~~~~~~~~~~~~~~~
 

@@ -1,6 +1,30 @@
 Changelog
 ---------
 
+4.7.0 (2026-05-02)
+~~~~~~~~~~~~~~~~~~
+
+Added
+^^^^^
+
+* Added :class:`~isaaclab.sensors.ImuSensor` for body-frame IMU acquisition with configurable noise model.
+
+Changed
+^^^^^^^
+
+* Improved error message in :class:`~isaaclab.managers.SceneEntityCfg` when an invalid joint name is supplied.
+
+Deprecated
+^^^^^^^^^^
+
+* Deprecated string-based config keys in :class:`~isaaclab.envs.ManagerBasedEnv`; pass dataclass instances instead. String keys will be removed in 5.0.
+
+Fixed
+^^^^^
+
+* Fixed :meth:`~isaaclab.assets.Articulation.write_root_pose` ignoring the env-id mask when batching writes.
+
+
 4.6.26 (2026-05-02)
 ~~~~~~~~~~~~~~~~~~~
 

@@ -1,6 +1,25 @@
 Changelog
 ---------
 
+1.0.0 (2026-05-02)
+~~~~~~~~~~~~~~~~~~
+
+Changed
+^^^^^^^
+
+* **Breaking:** :meth:`~isaaclab_physx.assets.Articulation.set_joint_state` now requires a per-env mask; passing a global tensor raises ``ValueError``. Use ``mask=slice(None)`` to preserve the prior behavior.
+
+Removed
+^^^^^^^
+
+* Removed deprecated module ``isaaclab_physx.legacy_articulation`` (use :class:`~isaaclab_physx.assets.Articulation` instead).
+
+Fixed
+^^^^^
+
+* Fixed collision-margin units in :class:`~isaaclab_physx.physics.PhysxManager` being treated as cm instead of m on assets imported from URDF.
+
+
 0.5.29 (2026-04-30)
 ~~~~~~~~~~~~~~~~~~~
 
