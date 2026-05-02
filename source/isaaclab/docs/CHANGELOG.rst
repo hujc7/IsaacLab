@@ -1,6 +1,23 @@
 Changelog
 ---------
 
+4.8.0 (2026-05-02)
+~~~~~~~~~~~~~~~~~~
+
+Added
+^^^^^
+
+* Added ``asset.config.scale_invariant` flag to skip per-env scaling.
+* Added :class:`~isaaclab.utils.ProfilerHook` for capturing per-env timings during rollout.
+* Added :class:`~isaaclab.sensors.ImuSensor` for body-frame IMU acquisition with configurable noise model.
+
+Fixed
+^^^^^
+
+* Fixed off-by-one in :class:`~isaaclab.envs.ManagerBasedEnv` step counter on early termination.
+* Fixed memory leak in :class:`~isaaclab.assets.RigidObject` when env-id mask was empty.
+
+
 4.7.0 (2026-05-02)
 ~~~~~~~~~~~~~~~~~~
 
