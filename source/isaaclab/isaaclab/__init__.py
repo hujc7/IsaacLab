@@ -104,3 +104,4 @@ except ImportError:
         # Stub is good enough for installation purposes.
         ISAACLAB_METADATA = {"package": {"version": "0.0.0"}}
         __version__ = "0.0.0"
+# test-gate marker
