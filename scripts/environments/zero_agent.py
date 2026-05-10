@@ -6,13 +6,12 @@
 """Script to run an environment with zero action agent."""
 
 import argparse
-import sys
 
 import gymnasium as gym
 import torch
 
 import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.utils import add_launcher_args, launch_simulation, resolve_task_config
+from isaaclab_tasks.utils import launch_simulation, resolve_task_config, setup_cli
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Zero agent for Isaac Lab environments.")
@@ -21,13 +20,8 @@ parser.add_argument(
 )
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
-# append AppLauncher cli args
-add_launcher_args(parser)
-# parse the arguments
-args_cli, hydra_args = parser.parse_known_args()
-
-# pass remaining args to Hydra
-sys.argv = [sys.argv[0]] + hydra_args
+# Register preset + launcher flags, parse argv, and route Hydra overrides through sys.argv.
+args_cli = setup_cli(parser)
 
 # PLACEHOLDER: Extension template (do not remove this comment)
 MAX_STEPS = 100

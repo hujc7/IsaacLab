@@ -1,0 +1,28 @@
+{
+  "_comment": "Worktree-local override; supersedes pyproject.toml [tool.pyright]. Gitignored — see .gitignore in this dir if you add it.",
+  "include": ["source", "scripts"],
+  "exclude": ["**/__pycache__", "**/_isaac_sim", "**/_compiler"],
+  "extraPaths": [
+    "/home/horde/workspaces/worktree/IsaacLab/preset-cli-review/source/isaaclab",
+    "/home/horde/workspaces/worktree/IsaacLab/preset-cli-review/source/isaaclab_tasks",
+    "/home/horde/workspaces/worktree/IsaacLab/preset-cli-review/source/isaaclab_physx",
+    "/home/horde/workspaces/worktree/IsaacLab/preset-cli-review/source/isaaclab_newton",
+    "/home/horde/workspaces/worktree/IsaacLab/preset-cli-review/source/isaaclab_assets",
+    "/home/horde/workspaces/worktree/IsaacLab/preset-cli-review/source/isaaclab_rl",
+    "/home/horde/workspaces/worktree/IsaacLab/preset-cli-review/source/isaaclab_visualizers",
+    "/home/horde/workspaces/worktree/IsaacLab/preset-cli-review/source/isaaclab_experimental",
+    "/home/horde/workspaces/worktree/IsaacLab/preset-cli-review/source/isaaclab_mimic",
+    "/home/horde/workspaces/worktree/IsaacLab/preset-cli-review/source/isaaclab_ov",
+    "/home/horde/workspaces/worktree/IsaacLab/preset-cli-review/source/isaaclab_ovphysx",
+    "/home/horde/workspaces/worktree/IsaacLab/preset-cli-review/source/isaaclab_teleop",
+    "/home/horde/workspaces/worktree/IsaacLab/preset-cli-review/source/isaaclab_contrib",
+    "/home/horde/workspaces/worktree/IsaacLab/preset-cli-review/source/isaaclab_tasks_experimental"
+  ],
+  "venvPath": "/home/horde/miniconda3/envs",
+  "venv": "env_isaaclab_review",
+  "pythonVersion": "3.12",
+  "pythonPlatform": "Linux",
+  "reportMissingImports": "warning",
+  "useLibraryCodeForTypes": true,
+  "indexing": true
+}

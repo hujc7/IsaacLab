@@ -277,12 +277,15 @@ def maybe_save_stage(test_name: str, physics_backend: str, renderer: str, data_t
 
 def _apply_overrides_to_env_cfg(env_cfg: Any, override_args: list[str]) -> Any:
     """Apply override args to env_cfg using parse_overrides and apply_overrides."""
-    from isaaclab_tasks.utils.hydra import apply_overrides, collect_presets, parse_overrides
+
+    from isaaclab.utils.presets import collect_presets
+
+    from isaaclab_tasks.utils.preset_cli import PresetCli
 
     presets = {"env": collect_presets(env_cfg)}
-    global_presets, preset_sel, preset_scalar, _ = parse_overrides(override_args, presets)
+    overrides = PresetCli.parse_overrides(override_args, presets)
     hydra_cfg = {"env": env_cfg.to_dict()}
-    env_cfg, _ = apply_overrides(env_cfg, None, hydra_cfg, global_presets, preset_sel, preset_scalar, presets)
+    env_cfg, _ = PresetCli.apply_overrides(env_cfg, None, hydra_cfg, overrides, presets)
     return env_cfg
 
 

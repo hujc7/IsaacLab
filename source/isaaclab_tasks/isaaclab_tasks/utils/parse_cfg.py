@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import gymnasium as gym
 import yaml
 
-from isaaclab_tasks.utils.hydra import resolve_presets
+from isaaclab.utils.presets import resolve_presets
 
 if TYPE_CHECKING:
     from isaaclab.envs import DirectRLEnvCfg, ManagerBasedRLEnvCfg
@@ -124,7 +124,11 @@ def load_cfg_from_registry(task_name: str, entry_point_key: str) -> dict | objec
 
 
 def parse_env_cfg(
-    task_name: str, device: str = "cuda:0", num_envs: int | None = None, use_fabric: bool | None = None
+    task_name: str,
+    device: str = "cuda:0",
+    num_envs: int | None = None,
+    use_fabric: bool | None = None,
+    presets: set[str] | frozenset[str] | None = None,
 ) -> ManagerBasedRLEnvCfg | DirectRLEnvCfg:
     """Parse configuration for an environment and override based on inputs.
 
@@ -135,6 +139,11 @@ def parse_env_cfg(
         use_fabric: Whether to enable/disable fabric interface. If false, all read/write operations go through USD.
             This slows down the simulation but allows seeing the changes in the USD through the USD stage.
             Defaults to None, in which case it is left unchanged.
+        presets: Set of preset names to apply globally during resolution
+            (equivalent to ``presets=<csv>`` on the Hydra CLI). When ``None``
+            or empty, every :class:`PresetCfg` falls back to its ``default``.
+            Use :class:`~isaaclab_tasks.utils.PresetCli` to gather this set
+            from ``--physics``/``--renderer``/``--presets`` flags.
 
     Returns:
         The parsed configuration object.
@@ -156,7 +165,7 @@ def parse_env_cfg(
     # Must happen BEFORE attribute overrides, otherwise overrides on PresetCfg wrapper
     # fields (e.g. cfg.scene when scene is a PresetCfg) get discarded when the wrapper
     # is replaced by its .default.
-    cfg = resolve_presets(cfg)
+    cfg = resolve_presets(cfg, selected=frozenset(presets) if presets else frozenset())
 
     # simulation device
     cfg.sim.device = device

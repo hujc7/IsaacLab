@@ -119,8 +119,8 @@ def test_obs_space_follows_clip_contraint(env_cfg_cls, device):
     # new USD stage
     sim_utils.create_new_stage()
 
-    # configure the env -- resolve Hydra presets so _Preset fields become plain values
-    from isaaclab_tasks.utils.hydra import resolve_presets
+    # configure the env -- resolve PresetCfg fields so they become plain values
+    from isaaclab.utils.presets import resolve_presets
 
     env_cfg = resolve_presets(env_cfg_cls())
     env_cfg.scene.num_envs = 2  # keep num_envs small for testing

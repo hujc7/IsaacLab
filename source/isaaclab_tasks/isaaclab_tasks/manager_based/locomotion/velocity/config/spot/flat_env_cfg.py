@@ -40,6 +40,7 @@ class PhysicsCfg(PresetCfg):
         num_substeps=1,
         debug_mode=False,
     )
+    physx = default
 
 
 ##

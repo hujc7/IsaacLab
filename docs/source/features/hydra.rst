@@ -358,6 +358,43 @@ including inside dict-valued fields such as ``actuators``:
 Using Presets
 ^^^^^^^^^^^^^
 
+The recommended way to select presets is via the typed ``--physics``,
+``--renderer``, and ``--presets`` flags exposed by every Isaac Lab script.
+These flags accept both ``--flag value`` and ``--flag=value`` forms.
+
+**Typed flags (preferred)** -- explicit and discoverable in ``--help``:
+
+.. code-block:: bash
+
+    python train.py --task=Isaac-Velocity-Rough-Anymal-C-v0 \
+        --physics newton_mjwarp \
+        --renderer newton_renderer \
+        --presets albedo,inference
+
+The kind of each preset (physics / renderer / domain) is declared at the
+class definition via the ``@register(PresetKind, name)`` decorator. For
+example, ``@register(PresetKind.PHYSICS, "physx")`` on ``PhysxCfg`` makes
+``physx`` reachable through ``--physics``;
+``@register(PresetKind.RENDERER, "newton_renderer")`` on
+``NewtonWarpRendererCfg`` puts it on ``--renderer``. Anything not declared
+under a typed kind is reachable via ``--presets`` (the free-form catch-all).
+Adding a new top-level CLI flag is one new ``PresetKind`` enum member -- the
+CLI layer picks it up automatically.
+
+To list the valid names for a specific task, pass ``--task`` together with
+``--help``:
+
+.. code-block:: bash
+
+    python train.py --task=Isaac-Cartpole-Camera-Presets-Direct-v0 --help
+
+**Bare ``presets=`` form (legacy / Hydra-style)** -- still supported and
+internally equivalent to ``--presets``:
+
+.. code-block:: bash
+
+    python train.py --task=Isaac-Velocity-Rough-Anymal-C-v0 presets=newton_mjwarp
+
 **Path presets** -- select a specific preset for one config path:
 
 .. code-block:: bash
@@ -365,27 +402,12 @@ Using Presets
     python train.py --task=Isaac-Velocity-Rough-Anymal-C-v0 \
         env.events=newton_mjwarp
 
-**Global presets** -- apply the same preset name everywhere it exists:
-
-.. code-block:: bash
-
-    # Apply "newton_mjwarp" preset to all configs that define it
-    python train.py --task=Isaac-Velocity-Rough-Anymal-C-v0 \
-        presets=newton_mjwarp
-
-**Multiple global presets** -- apply several non-conflicting presets:
+**Combined** -- typed flags + scalar overrides:
 
 .. code-block:: bash
 
     python train.py --task=Isaac-Velocity-Rough-Anymal-C-v0 \
-        presets=newton_mjwarp,inference
-
-**Combined** -- global presets + scalar overrides:
-
-.. code-block:: bash
-
-    python train.py --task=Isaac-Velocity-Rough-Anymal-C-v0 \
-        presets=newton_mjwarp \
+        --physics newton_mjwarp \
         env.sim.dt=0.002
 
 
