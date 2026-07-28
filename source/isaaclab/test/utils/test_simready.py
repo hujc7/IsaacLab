@@ -31,8 +31,6 @@ def make_filter(**kwargs) -> SimReadyObjectFilterCfg:
         search_phrases=("box",),
         size_range=kwargs.pop("size_range", (0.02, 0.15)),
         mass_range=kwargs.pop("mass_range", (0.005, 3.0)),
-        heavy_from=kwargs.pop("heavy_from", 1.5),
-        heavy_fraction=kwargs.pop("heavy_fraction", 0.10),
         **kwargs,
     )
 
@@ -129,16 +127,16 @@ class TestSelect:
 
         assert sorted(spec.url for spec in selected) == ["a/Apple/a.usd", "a/Pear/a.usd"]
 
-    def test_select_reserves_a_share_for_objects_at_the_edge_of_the_gripper(self, tmp_path):
-        """A set where everything lifts teaches the policy that lifting always works."""
-        light = [make_spec(f"a/Light{i}/a.usd", mass=0.2) for i in range(20)]
-        heavy = [make_spec(f"a/Heavy{i}/a.usd", mass=2.0) for i in range(20)]
-        library = make_library(tmp_path, light + heavy)
+    def test_a_custom_filter_can_reject_what_the_named_fields_cannot(self, tmp_path):
+        """Aspect ratio is not a config field, so it has to be expressible as a predicate."""
+        cube = make_spec("a/Cube/a.usd", dims=(0.08, 0.08, 0.08))
+        slab = make_spec("a/Slab/a.usd", dims=(0.14, 0.10, 0.03))
+        library = make_library(tmp_path, [cube, slab])
+        library.cfg.object_filter.filter_func = lambda spec: spec.max_dim / spec.min_dim < 2.0
 
-        selected = library.select(num_objects=10, candidates=[spec.url for spec in light + heavy])
+        selected = library.select(num_objects=10, candidates=[cube.url, slab.url])
 
-        assert len(selected) == 10
-        assert sum(spec.mass >= library.cfg.object_filter.heavy_from for spec in selected) == 1
+        assert [spec.url for spec in selected] == ["a/Cube/a.usd"]
 
     def test_select_keeps_one_asset_per_family(self, tmp_path):
         """Unique files are not visual variety: five golf balls still render as one object."""

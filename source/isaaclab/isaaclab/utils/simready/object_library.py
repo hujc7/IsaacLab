@@ -279,20 +279,9 @@ class SimReadyObjectLibrary:
             logger.info("Found %d distinct families among %d usable assets.", len(by_family), len(kept))
             kept = list(by_family.values())
 
-        # reserve a slice of the selection for objects at the edge of what the robot can lift
-        heavy = sorted((spec for spec in kept if spec.mass >= object_filter.heavy_from), key=lambda s: s.mass)
-        light = sorted((spec for spec in kept if spec.mass < object_filter.heavy_from), key=lambda s: s.mass)
-        num_heavy = min(len(heavy), round(num_objects * object_filter.heavy_fraction))
-        selected = light[: num_objects - num_heavy] + heavy[:num_heavy]
+        selected = sorted(kept, key=lambda spec: spec.mass)[:num_objects]
 
-        logger.info(
-            "Selected %d of %d usable objects from %d candidates (%d at or above %.2f kg).",
-            len(selected),
-            len(kept),
-            len(candidates),
-            num_heavy,
-            object_filter.heavy_from,
-        )
+        logger.info("Selected %d of %d usable objects from %d candidates.", len(selected), len(kept), len(candidates))
         for reason, count in sorted(dropped.items(), key=lambda item: -item[1]):
             logger.info("Dropped %d candidates: %s.", count, reason)
         return selected
@@ -442,4 +431,6 @@ def _rejection_reason(spec: ObjectSpec | None, cfg: SimReadyObjectFilterCfg) -> 
         return "heavier than the gripper can hold"
     if spec.mass < cfg.mass_range[0]:
         return "too light for stable contact"
+    if cfg.filter_func is not None and not cfg.filter_func(spec):
+        return "rejected by the configured filter function"
     return None

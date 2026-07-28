@@ -17,10 +17,15 @@ Filter fields are annotated with where they are applied:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import MISSING
+from typing import TYPE_CHECKING
 
 from isaaclab.utils.assets import SIMREADY_SEARCH_SERVICE_ENDPOINT
 from isaaclab.utils.configclass import configclass
+
+if TYPE_CHECKING:
+    from .object_library import ObjectSpec
 
 
 @configclass
@@ -112,20 +117,6 @@ class SimReadyObjectFilterCfg:
     contact is numerically unstable. The service neither returns nor filters on mass.
     """
 
-    heavy_from: float = float("inf")
-    """**[local]** Mass [kg] at which an object counts as being at the edge of the robot's capability.
-
-    Only read when :attr:`heavy_fraction` is non-zero.
-    """
-
-    heavy_fraction: float = 0.0
-    """**[local]** Share of the selection reserved for objects at or above :attr:`heavy_from`.
-
-    A set in which every object lifts on the first try teaches the policy that lifting always works,
-    so reserving a slice for objects that may not come up keeps that signal honest. Left at zero no
-    slice is reserved, since how much of the set should be unliftable is a property of the task.
-    """
-
     require_rigid_body: bool = True
     """**[local]** Whether to require a dynamic rigid body.
 
@@ -139,6 +130,18 @@ class SimReadyObjectFilterCfg:
     This closes a real gap rather than duplicating the service filter: the service matches assets
     that passed on *some* date, so one that later regressed still comes back as a hit. Re-reading the
     dated verdicts from the asset is the authoritative check.
+    """
+
+    filter_func: Callable[[ObjectSpec], bool] | None = None
+    """**[local]** Extra predicate an object must satisfy, or ``None`` to apply no extra check.
+
+    Receives the audited :class:`~isaaclab.utils.simready.ObjectSpec` and returns whether to keep the
+    object. Use it for criteria this configuration does not name -- an aspect-ratio bound, a density
+    computed from mass and extents, a naming convention -- without subclassing the library.
+
+    The spec carries what the built-in filters need: source path, rigid-body path, authored mass,
+    bounding-box extents, and the validation verdict. Anything beyond that is not available here,
+    because the audit is cached in that form.
     """
 
     distinct_families: bool = True

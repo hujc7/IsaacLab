@@ -96,11 +96,9 @@ class DexsuiteKukaAllegroLiftSimReadyEnvCfg(DexsuiteKukaAllegroLiftEnvCfg):
             excluded_path_fragments=NON_TABLE_TOP_PATH_FRAGMENTS,
             # what the arm can reach around and the hand can close on
             size_range=(0.02, 0.15),
-            # the upper bound is what the Allegro hand can hold
+            # the upper bound is what the Allegro hand can hold; the catalogue's own spread across
+            # this range is what decides how often lifting is easy
             mass_range=(0.005, 3.0),
-            # keep a tenth of the set at the edge of that, so lifting is not always a given
-            heavy_from=1.5,
-            heavy_fraction=0.10,
         )
     )
     """How the objects are searched for, filtered, and prepared."""
