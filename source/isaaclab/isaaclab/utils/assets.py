@@ -103,12 +103,16 @@ NEWTON_ASSET_DIR: str = os.environ.get("NEWTON_ASSET_DIR", NEWTON_ASSET_REPO_URL
 GIT_ASSET_CACHE_DIR: str = os.path.join(tempfile.gettempdir(), "asset_cache")
 """Default local directory where git asset repositories are cached."""
 
-SIMREADY_SEARCH_SERVICE_ENDPOINT = "https://search.dev.simready.omniverse.nvidia.com/"
+SIMREADY_SEARCH_SERVICE_ENDPOINT = "https://search.simready.omniverse.nvidia.com/"
 """Default SimReady USD-Search service endpoint.
 
-The service requires HTTP Basic authentication. The credentials are read by the ``simready-search``
-package from the ``USD_SEARCH_USERNAME`` and ``USD_SEARCH_PASSWORD`` environment variables, which
-must be set before the first search call.
+The credentials, when the deployment requires them, are read by the ``simready-search`` package from
+the ``USD_SEARCH_USERNAME`` and ``USD_SEARCH_PASSWORD`` environment variables, which must be set
+before the first search call.
+
+.. note::
+    A ``search.dev.<...>`` deployment also exists, but its asset index lags the production one and
+    returns stale results, so it is not a usable default.
 """
 
 _GIT_SSH_RE = re.compile(r"^[^@/:]+@[^:]+:.+")
@@ -431,7 +435,10 @@ def search_simready_usd_paths(
     min_relevance: float = 0.0,
     filter_profiles: list[str] | None = None,
     filter_features: list[str] | None = None,
+    filter_max_height: float | None = None,
+    exclude_path_contains: list[str] | None = None,
     service_endpoint: str = SIMREADY_SEARCH_SERVICE_ENDPOINT,
+    raise_on_empty: bool = True,
 ) -> list[str]:
     """Search the SimReady USD-Search service and return the top-ranked USD asset paths.
 
@@ -463,7 +470,14 @@ def search_simready_usd_paths(
             (e.g. ``"Prop-Robotics-Isaac"``).
         filter_features: SimReady feature names that every match must have
             (e.g. ``"FET004_BASE_PHYSX"`` for rigid-body physics readiness).
+        filter_max_height: Upper bound on the asset's bounding-box height [m]. This is the only
+            dimension the service filters on, so it bounds one axis rather than the largest extent.
+        exclude_path_contains: Substrings that must not appear in a match's asset path (e.g.
+            ``"Warehouse"``). Excluding server-side keeps unwanted assets out of the
+            :paramref:`top_k` budget instead of spending it on results that are discarded locally.
         service_endpoint: URL of the USD-Search service.
+        raise_on_empty: Whether an empty result set is an error. Set to ``False`` when sweeping many
+            phrases, where an individual phrase matching nothing is expected.
 
     Returns:
         USD asset paths ordered by descending relevance, at most :paramref:`top_k` entries.
@@ -471,12 +485,14 @@ def search_simready_usd_paths(
     Raises:
         ImportError: If the optional ``simready-search`` package is not installed.
         ValueError: If no search criterion is provided, ``top_k`` is not positive, or the search
-            returned no results.
+            returned no results while :paramref:`raise_on_empty` is set.
     """
     try:
         from simready.search import (  # noqa: PLC0415
             AssetLibrary,
             SearchFilterFeature,
+            SearchFilterHeight,
+            SearchFilterPathContains,
             SearchFilterPhrase,
             SearchFilterProfile,
             SearchFilterRelevance,
@@ -502,12 +518,17 @@ def search_simready_usd_paths(
         filters.append(SearchFilterProfile(profile))
     for feature in filter_features or []:
         filters.append(SearchFilterFeature(feature))
+    if filter_max_height is not None:
+        filters.append(SearchFilterHeight(maximum=filter_max_height))
+    excluded = [SearchFilterPathContains(fragment) for fragment in exclude_path_contains or []]
 
     # raise on network/auth failures instead of the library default of returning empty results
     library = AssetLibrary(raise_on_network_error=True)
     library.add_service_source(service_endpoint)
-    matches = library.search(include_all=filters, max_count=top_k)
+    matches = library.search(include_all=filters, exclude_any=excluded, max_count=top_k)
     if not matches:
+        if not raise_on_empty:
+            return []
         raise ValueError(
             f"SimReady search returned no results for query: {query!r}. Check the query phrase,"
             " the filters, and the service endpoint."
