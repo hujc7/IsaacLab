@@ -17,62 +17,10 @@ Filter fields are annotated with where they are applied:
 
 from __future__ import annotations
 
+from dataclasses import MISSING
+
 from isaaclab.utils.assets import SIMREADY_SEARCH_SERVICE_ENDPOINT
 from isaaclab.utils.configclass import configclass
-
-DEFAULT_TABLE_TOP_PHRASES = (
-    "food",
-    "grocery",
-    "can",
-    "canned food",
-    "box",
-    "boxed food",
-    "carton",
-    "bottle",
-    "jar",
-    "cup",
-    "fruit",
-    "vegetable",
-    "snack",
-    "candy",
-    "cereal",
-    "spice",
-    "tea box",
-    "coffee",
-    "milk",
-    "juice",
-    "package",
-    "container",
-    "bowl",
-    "toy",
-    "block",
-    "soap",
-    "medicine",
-    "tube",
-    "tin",
-    "packet",
-)
-"""Search phrases covering table-top manipulables.
-
-The index ranks by appearance rather than by geometry, so no single phrase returns a shape class and
-coverage comes from the breadth of the phrasing instead.
-"""
-
-DEFAULT_EXCLUDED_PATH_FRAGMENTS = (
-    "Warehouse",
-    "Machines",
-    "Hardware",
-    "engineComponent",
-    "drivetrain",
-    "airSystem",
-    "coolingSystem",
-    "electricalSystem",
-    "fuelSystem",
-    "brakeSystem",
-    "exhaust",
-    "transmission",
-)
-"""Catalogue areas that hold no table-top manipulables (heavy machine parts, vehicle assemblies)."""
 
 
 @configclass
@@ -94,8 +42,12 @@ class SimReadyObjectFilterCfg:
     Filters the search service applies.
     """
 
-    search_phrases: tuple[str, ...] = DEFAULT_TABLE_TOP_PHRASES
-    """**[service]** Phrases whose union forms the candidate pool, one query each."""
+    search_phrases: tuple[str, ...] = MISSING
+    """**[service]** Phrases whose union forms the candidate pool, one query each.
+
+    The index ranks by appearance rather than by geometry, so no single phrase returns a shape class
+    and coverage comes from the breadth of the phrasing instead.
+    """
 
     required_features: tuple[str, ...] = ("FET003_BASE_PHYSX",)
     """**[service]** SimReady features every match must carry.
@@ -125,7 +77,7 @@ class SimReadyObjectFilterCfg:
     The service compares the value exactly, so this cannot express ranges or negation.
     """
 
-    excluded_path_fragments: tuple[str, ...] = DEFAULT_EXCLUDED_PATH_FRAGMENTS
+    excluded_path_fragments: tuple[str, ...] = ()
     """**[service]** Path substrings that disqualify a match.
 
     Excluding at the service keeps unusable assets out of the per-phrase result budget instead of
@@ -142,7 +94,7 @@ class SimReadyObjectFilterCfg:
     Filters completed after opening the asset.
     """
 
-    size_range: tuple[float, float] = (0.02, 0.15)
+    size_range: tuple[float, float] = MISSING
     """**[service, partial]** Accepted bounding-box extents [m], as ``(minimum, maximum)``.
 
     The smallest extent must exceed the lower bound, since a thin object gives the fingers nothing to
@@ -153,21 +105,25 @@ class SimReadyObjectFilterCfg:
     the service and is rejected here.
     """
 
-    mass_range: tuple[float, float] = (0.005, 3.0)
+    mass_range: tuple[float, float] = MISSING
     """**[local]** Accepted authored mass [kg], as ``(minimum, maximum)``.
 
     The upper bound is what the gripper can hold; the lower bound excludes objects so light that
     contact is numerically unstable. The service neither returns nor filters on mass.
     """
 
-    heavy_from: float = 1.5
-    """**[local]** Mass [kg] at which an object counts as being at the edge of the robot's capability."""
+    heavy_from: float = float("inf")
+    """**[local]** Mass [kg] at which an object counts as being at the edge of the robot's capability.
 
-    heavy_fraction: float = 0.10
+    Only read when :attr:`heavy_fraction` is non-zero.
+    """
+
+    heavy_fraction: float = 0.0
     """**[local]** Share of the selection reserved for objects at or above :attr:`heavy_from`.
 
-    A set in which every object lifts on the first try teaches the policy that lifting always works.
-    Reserving a slice for objects that may not come up keeps that signal honest.
+    A set in which every object lifts on the first try teaches the policy that lifting always works,
+    so reserving a slice for objects that may not come up keeps that signal honest. Left at zero no
+    slice is reserved, since how much of the set should be unliftable is a property of the task.
     """
 
     require_rigid_body: bool = True

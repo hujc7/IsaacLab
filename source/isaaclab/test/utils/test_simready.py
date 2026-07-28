@@ -16,8 +16,25 @@ from dataclasses import asdict
 
 import pytest
 
-from isaaclab.utils.simready import ObjectSpec, SimReadyObjectLibrary, SimReadyObjectLibraryCfg
+from isaaclab.utils.simready import (
+    ObjectSpec,
+    SimReadyObjectFilterCfg,
+    SimReadyObjectLibrary,
+    SimReadyObjectLibraryCfg,
+)
 from isaaclab.utils.simready.object_library import _rejection_reason
+
+
+def make_filter(**kwargs) -> SimReadyObjectFilterCfg:
+    """Build a fully specified filter, since the config carries no task defaults."""
+    return SimReadyObjectFilterCfg(
+        search_phrases=("box",),
+        size_range=kwargs.pop("size_range", (0.02, 0.15)),
+        mass_range=kwargs.pop("mass_range", (0.005, 3.0)),
+        heavy_from=kwargs.pop("heavy_from", 1.5),
+        heavy_fraction=kwargs.pop("heavy_fraction", 0.10),
+        **kwargs,
+    )
 
 
 def make_spec(url: str, mass: float | None = 0.2, dims: tuple[float, float, float] = (0.07, 0.07, 0.07), **kwargs):
@@ -35,7 +52,7 @@ def make_library(tmp_path, specs: list[ObjectSpec]) -> SimReadyObjectLibrary:
     """Build a library whose audit cache already holds ``specs``, so no asset is ever opened."""
     cache_path = tmp_path / "audit_cache.json"
     cache_path.write_text(json.dumps({spec.url: asdict(spec) for spec in specs}))
-    cfg = SimReadyObjectLibraryCfg()
+    cfg = SimReadyObjectLibraryCfg(object_filter=make_filter())
     cfg.cache_path = str(cache_path)
     cfg.download_dir = str(tmp_path / "downloads")
     cfg.prepared_dir = str(tmp_path / "prepared")
@@ -46,7 +63,7 @@ class TestRejectionReason:
     """An asset is rejected for what this robot can handle, never for how the asset was authored."""
 
     def test_asset_within_every_bound_is_accepted(self):
-        assert _rejection_reason(make_spec("a/Apple/a.usd"), SimReadyObjectLibraryCfg().object_filter) is None
+        assert _rejection_reason(make_spec("a/Apple/a.usd"), make_filter()) is None
 
     @pytest.mark.parametrize(
         "spec_kwargs, expected",
@@ -61,20 +78,20 @@ class TestRejectionReason:
         ],
     )
     def test_unusable_asset_is_rejected_with_a_reason(self, spec_kwargs, expected):
-        reason = _rejection_reason(make_spec("a/Thing/a.usd", **spec_kwargs), SimReadyObjectLibraryCfg().object_filter)
+        reason = _rejection_reason(make_spec("a/Thing/a.usd", **spec_kwargs), make_filter())
         assert reason is not None and expected in reason
 
     def test_asset_that_fails_to_open_is_rejected(self):
-        assert _rejection_reason(None, SimReadyObjectLibraryCfg().object_filter) == "could not be opened"
+        assert _rejection_reason(None, make_filter()) == "could not be opened"
 
     def test_stale_validation_is_accepted_when_the_check_is_disabled(self):
-        object_filter = SimReadyObjectLibraryCfg().object_filter
+        object_filter = make_filter()
         object_filter.require_latest_validation = False
         assert _rejection_reason(make_spec("a/Milk/a.usd", validation_passed=False), object_filter) is None
 
     def test_widening_the_mass_range_accepts_a_heavier_asset(self):
         """The bound is a statement about the gripper, so a stronger gripper keeps more objects."""
-        object_filter = SimReadyObjectLibraryCfg().object_filter
+        object_filter = make_filter()
         assert _rejection_reason(make_spec("a/Can/a.usd", mass=5.0), object_filter) is not None
         object_filter.mass_range = (0.005, 6.0)
         assert _rejection_reason(make_spec("a/Can/a.usd", mass=5.0), object_filter) is None
@@ -178,7 +195,7 @@ class TestAuditCache:
                 }
             )
         )
-        cfg = SimReadyObjectLibraryCfg()
+        cfg = SimReadyObjectLibraryCfg(object_filter=make_filter())
         cfg.cache_path = str(cache_path)
         cfg.download_dir = str(tmp_path / "downloads")
         library = SimReadyObjectLibrary(cfg)
@@ -190,6 +207,6 @@ class TestAuditCache:
         spec = make_spec("a/Apple/a.usd")
         make_library(tmp_path, [spec]).save_cache()
 
-        cfg = SimReadyObjectLibraryCfg()
+        cfg = SimReadyObjectLibraryCfg(object_filter=make_filter())
         cfg.cache_path = str(tmp_path / "audit_cache.json")
         assert SimReadyObjectLibrary(cfg).audit(spec.url).url == spec.url
