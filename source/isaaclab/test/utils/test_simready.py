@@ -52,6 +52,7 @@ def make_library(tmp_path, specs: list[ObjectSpec]) -> SimReadyObjectLibrary:
     cache_path.write_text(json.dumps({spec.url: asdict(spec) for spec in specs}))
     cfg = SimReadyObjectLibraryCfg(object_filter=make_filter())
     cfg.cache_path = str(cache_path)
+    cfg.resolution_cache_path = str(tmp_path / "resolved_objects.json")
     cfg.download_dir = str(tmp_path / "downloads")
     cfg.prepared_dir = str(tmp_path / "prepared")
     return SimReadyObjectLibrary(cfg)
@@ -208,3 +209,50 @@ class TestAuditCache:
         cfg = SimReadyObjectLibraryCfg(object_filter=make_filter())
         cfg.cache_path = str(tmp_path / "audit_cache.json")
         assert SimReadyObjectLibrary(cfg).audit(spec.url).url == spec.url
+
+
+class TestResolutionCache:
+    """A repeat resolve must not re-query the service, so every rank sees the same object set."""
+
+    def _library(self, tmp_path, specs, **filter_kwargs):
+        library = make_library(tmp_path, specs)
+        library.cfg.object_filter = make_filter(**filter_kwargs)
+        library.prepare = lambda selected: [spec.url for spec in selected]
+        library.search = lambda: self._record() or [spec.url for spec in specs]
+        return library
+
+    def _record(self):
+        self.searches += 1
+
+    def test_repeat_resolve_issues_no_search(self, tmp_path):
+        self.searches = 0
+        specs = [make_spec(f"a/O{i}/a.usd", mass=0.1 + i * 0.05) for i in range(6)]
+
+        first = self._library(tmp_path, specs).resolve(4)
+        second = self._library(tmp_path, specs).resolve(4)
+
+        assert first == second
+        assert self.searches == 1, "the second resolve must be answered from the cache"
+
+    def test_changing_a_filter_resolves_afresh(self, tmp_path):
+        """The fingerprint covers the filter, so a different query cannot reuse the old answer."""
+        self.searches = 0
+        specs = [make_spec(f"a/O{i}/a.usd", mass=0.1 + i * 0.05) for i in range(6)]
+
+        self._library(tmp_path, specs).resolve(4)
+        self._library(tmp_path, specs, mass_range=(0.005, 0.2)).resolve(4)
+
+        assert self.searches == 2
+
+    def test_resolution_is_recorded_in_a_readable_form(self, tmp_path):
+        self.searches = 0
+        specs = [make_spec(f"a/O{i}/a.usd", mass=0.1 + i * 0.05) for i in range(6)]
+        library = self._library(tmp_path, specs)
+
+        library.resolve(3)
+
+        recorded = json.loads((tmp_path / "resolved_objects.json").read_text())
+        assert len(recorded) == 1
+        entry = next(iter(recorded.values()))
+        assert entry["num_objects"] == 3
+        assert len(entry["assets"]) == 3

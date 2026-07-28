@@ -171,6 +171,20 @@ class SimReadyObjectLibraryCfg:
     sweep of a catalogue costs minutes, every later one is instant.
     """
 
+    resolution_cache_path: str = "logs/simready/resolved_objects.json"
+    """JSON file recording which assets a given query resolved to.
+
+    Without it every construction re-queries the service -- once per search phrase, and once per rank
+    under distributed training, where a catalogue update between ranks would hand them different
+    object sets. The file is keyed by a fingerprint of the effective query, so changing any filter
+    resolves afresh, and it is small and ordered enough to commit when a run has to be reproducible.
+
+    .. note::
+        :attr:`SimReadyObjectFilterCfg.filter_func` is fingerprinted by name only, since a function
+        body cannot be hashed meaningfully. Editing a predicate in place without renaming it will
+        reuse the previous resolution; delete this file to force a re-resolve.
+    """
+
     download_dir: str = "logs/simready/downloads"
     """Directory mirroring fetched assets, laid out to match their remote paths."""
 

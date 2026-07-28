@@ -327,7 +327,12 @@ class SimReadyObjectLibrary:
         return prepared
 
     def resolve(self, num_objects: int) -> list[str]:
-        """Search, select, and prepare in one call.
+        """Search, select, and prepare in one call, reusing a previous resolution when possible.
+
+        The resolved asset list is recorded against a fingerprint of the query, so a repeat call with
+        the same configuration issues no search requests at all. That is what keeps every rank of a
+        distributed run on the same object set: the first to resolve writes the list, the rest read
+        it, instead of each querying a catalogue that may have changed in between.
 
         Args:
             num_objects: Number of objects to resolve.
@@ -335,7 +340,55 @@ class SimReadyObjectLibrary:
         Returns:
             Local paths of the prepared USDs, ready to hand to a spawner.
         """
-        return self.prepare(self.select(num_objects))
+        fingerprint = self._query_fingerprint(num_objects)
+        urls = self._load_resolution(fingerprint)
+        if urls is None:
+            specs = self.select(num_objects)
+            self._save_resolution(fingerprint, num_objects, [spec.url for spec in specs])
+        else:
+            logger.info("Reusing %d objects resolved earlier for this query.", len(urls))
+            specs = [spec for spec in (self.audit(url) for url in urls) if spec is not None]
+        return self.prepare(specs)
+
+    def _query_fingerprint(self, num_objects: int) -> str:
+        """Return a stable digest of everything that decides which objects a query resolves to."""
+        import hashlib  # noqa: PLC0415
+
+        object_filter = self.cfg.object_filter.to_dict()
+        # a predicate cannot be hashed by behaviour, so record what identifies it instead
+        predicate = self.cfg.object_filter.filter_func
+        object_filter["filter_func"] = getattr(predicate, "__qualname__", None)
+        query = {
+            "endpoint": self.cfg.service_endpoint,
+            "results_per_phrase": self.cfg.results_per_phrase,
+            "num_objects": num_objects,
+            "filter": object_filter,
+        }
+        return hashlib.sha256(json.dumps(query, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+    def _load_resolution(self, fingerprint: str) -> list[str] | None:
+        """Return the assets this query resolved to before, or ``None`` on a miss."""
+        if not os.path.exists(self.cfg.resolution_cache_path):
+            return None
+        with open(self.cfg.resolution_cache_path) as f:
+            entry = json.load(f).get(fingerprint)
+        return None if entry is None else entry["assets"]
+
+    def _save_resolution(self, fingerprint: str, num_objects: int, urls: list[str]) -> None:
+        """Record which assets this query resolved to, alongside the query itself for readability."""
+        path = self.cfg.resolution_cache_path
+        resolutions = {}
+        if os.path.exists(path):
+            with open(path) as f:
+                resolutions = json.load(f)
+        resolutions[fingerprint] = {
+            "num_objects": num_objects,
+            "search_phrases": list(self.cfg.object_filter.search_phrases),
+            "assets": urls,
+        }
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(resolutions, f, indent=2, sort_keys=True)
 
     def save_cache(self) -> None:
         """Persist the audits, so a later resolve costs no asset opens."""
