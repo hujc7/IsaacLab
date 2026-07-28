@@ -459,7 +459,8 @@ def search_simready_usd_paths(
         instead of re-querying on every run. For physics-ready assets, restrict results with
         SimReady features, e.g. ``filter_features=["FET004_BASE_PHYSX"]``. Feature tags certify
         PhysX readiness only; validate assets under other physics backends before training on
-        them (see ``scripts/demos/simready_lift.py``).
+        them. For a task that resolves its objects this way, see
+        :mod:`isaaclab.utils.simready`.
 
     Args:
         query: Free-text search phrase (e.g. ``"food box"``). At least one of :paramref:`query`,
