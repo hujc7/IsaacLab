@@ -7,8 +7,8 @@
 
 from __future__ import annotations
 
-from isaaclab.utils import configclass
 from isaaclab.utils.assets import SIMREADY_SEARCH_SERVICE_ENDPOINT
+from isaaclab.utils.configclass import configclass
 
 DEFAULT_TABLE_TOP_PHRASES = (
     "food",
