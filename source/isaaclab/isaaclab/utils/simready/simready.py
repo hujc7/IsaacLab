@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 
 from isaaclab.utils.assets import search_simready_usd_paths
 
@@ -68,6 +68,10 @@ class ObjectSpec:
         directory = re.sub(r"_[A-Z]?\d+$", "", directory)
         directory = re.sub(r"_[A-Z]\d+$", "", directory)
         return directory.lower().replace("_", "")
+
+
+_OBJECT_SPEC_FIELDS = frozenset(f.name for f in fields(ObjectSpec))
+"""Field names an audit-cache entry must carry to still be readable."""
 
 
 class SimReadyObjectLibrary:
@@ -186,7 +190,12 @@ class SimReadyObjectLibrary:
         """
         if url in self._cache:
             cached = self._cache[url]
-            return None if cached is None else ObjectSpec(**{**cached, "dims": tuple(cached["dims"])})
+            if cached is None:
+                return None
+            # entries written by an older field layout are regenerable, so re-audit rather than fail
+            if cached.keys() == _OBJECT_SPEC_FIELDS:
+                return ObjectSpec(**{**cached, "dims": tuple(cached["dims"])})
+            logger.debug("Discarding cache entry with an outdated layout: %s", url)
         spec = self._audit_uncached(url)
         self._cache[url] = None if spec is None else asdict(spec)
         return spec

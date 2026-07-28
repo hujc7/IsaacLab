@@ -162,6 +162,30 @@ class TestAuditCache:
 
         assert library.audit("a/Broken/a.usd") is None
 
+    def test_entry_from_an_older_field_layout_is_discarded(self, tmp_path):
+        """A cache is regenerable, so a layout change must re-audit rather than raise."""
+        cache_path = tmp_path / "audit_cache.json"
+        cache_path.write_text(
+            json.dumps(
+                {
+                    "a/Apple/a.usd": {
+                        "url": "a/Apple/a.usd",
+                        "body_path": "/B",
+                        "mass": 0.2,
+                        "dims": [0.07, 0.07, 0.07],
+                        "fet003_passed": True,  # the field this attribute used to be called
+                    }
+                }
+            )
+        )
+        cfg = SimReadyObjectLibraryCfg()
+        cfg.cache_path = str(cache_path)
+        cfg.download_dir = str(tmp_path / "downloads")
+        library = SimReadyObjectLibrary(cfg)
+
+        # the stale entry is dropped, so the asset is re-audited; it is unreachable here, hence None
+        assert library.audit("a/Apple/a.usd") is None
+
     def test_saved_cache_is_reused_by_a_later_library(self, tmp_path):
         spec = make_spec("a/Apple/a.usd")
         make_library(tmp_path, [spec]).save_cache()
