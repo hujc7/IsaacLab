@@ -13,8 +13,6 @@ import os
 import re
 from dataclasses import asdict, dataclass, fields
 
-from isaaclab.utils.assets import search_simready_usd_paths
-
 from .object_library_cfg import SimReadyObjectFilterCfg, SimReadyObjectLibraryCfg
 
 logger = logging.getLogger(__name__)
@@ -44,7 +42,7 @@ class ObjectSpec:
     """World-space bounding-box extents [m]."""
 
     validation_passed: bool
-    """Whether the newest-dated ``FET003_BASE_PHYSX`` verdict is a pass."""
+    """Whether the newest-dated verdict for every required feature is a pass."""
 
     @property
     def max_dim(self) -> float:
@@ -77,6 +75,28 @@ _OBJECT_SPEC_FIELDS = frozenset(f.name for f in fields(ObjectSpec))
 class SimReadyObjectLibrary:
     """Searches, audits, filters, and prepares SimReady assets for a manipulation task.
 
+    The catalogue is turned into a usable object set in four stages. :meth:`resolve` runs all four;
+    the individual methods are exposed for inspecting or overriding a stage.
+
+    .. code-block:: text
+
+        search()   ask the service which assets look right          1 request per phrase
+           |       every natively supported filter is applied here
+           v
+        audit()    open each candidate and read what the service    1 fetch + open per asset,
+           |       does not expose: body, mass, extents, verdicts   cached forever after
+           v
+        select()   keep what the robot can handle, stratify by      no I/O
+           |       mass, collapse near-identical variants
+           v
+        prepare()  write task-ready USDs at a uniform /Object root  1 write per selected asset
+
+    :meth:`audit` is the only expensive stage and the reason the library exists: the service returns
+    a path, a relevance score and tags, but nothing a manipulation task can decide on. Its results
+    are cached to :attr:`~SimReadyObjectLibraryCfg.cache_path`, so the first sweep of a catalogue
+    costs minutes and every later one is instant -- which is what makes resolving objects inside a
+    task configuration practical.
+
     Args:
         cfg: Configuration of the library.
     """
@@ -93,36 +113,64 @@ class SimReadyObjectLibrary:
     """
 
     def search(self) -> list[str]:
-        """Return the distinct candidate assets matching any configured phrase.
+        """Return the distinct candidate assets, applying every natively supported filter.
 
-        Restricting to ``FET003_BASE_PHYSX`` keeps the results to single-body PhysX-ready assets.
-        ``FET004`` is the *multibody* feature, and so is the wrong filter for a task that needs one
-        rigid body per object.
+        One query is issued per phrase, because the index ranks by appearance and no single phrase
+        returns a geometry class. Filters the service supports are pushed server-side so unmatched
+        assets never consume the per-phrase result budget; the rest are completed by :meth:`select`.
 
         Returns:
             Candidate asset paths, ordered deterministically.
         """
+        from simready.search import AssetLibrary  # noqa: PLC0415
+
+        object_filter = self.cfg.object_filter
+        library = AssetLibrary(raise_on_network_error=True)
+        library.add_service_source(self.cfg.service_endpoint)
+        excluded = [_filter("PathContains", fragment) for fragment in object_filter.excluded_path_fragments]
+
         found: dict[str, str] = {}
-        for phrase in self.cfg.search_phrases:
+        for phrase in object_filter.search_phrases:
             try:
-                matches = search_simready_usd_paths(
-                    query=phrase,
-                    top_k=self.cfg.results_per_phrase,
-                    filter_features=["FET003_BASE_PHYSX"],
-                    filter_max_height=self.cfg.object_filter.size_range[1],
-                    exclude_path_contains=list(self.cfg.excluded_path_fragments),
-                    service_endpoint=self.cfg.service_endpoint,
-                    raise_on_empty=False,
+                matches = library.search(
+                    include_all=[_filter("Phrase", phrase), *self._native_filters()],
+                    exclude_any=excluded,
+                    base_paths=list(object_filter.base_paths) or None,
+                    max_count=self.cfg.results_per_phrase,
                 )
             except Exception:  # noqa: BLE001 -- one bad phrase must not sink the whole sweep
                 logger.warning("SimReady search failed for phrase: %s", phrase, exc_info=True)
                 continue
-            for path in matches:
-                if any(fragment in path for fragment in self.cfg.excluded_path_fragments):
+            for match in matches:
+                path = match.asset_path
+                if any(fragment in path for fragment in object_filter.excluded_path_fragments):
                     continue  # re-check locally: the exclusion above is applied by the service
                 # de-duplicate on file name: the same asset surfaces under many phrases
                 found[path.rsplit("/", 1)[-1]] = path
         return sorted(found.values())
+
+    def _native_filters(self) -> list:
+        """Build the service-side filters for every configured field the service supports."""
+        object_filter = self.cfg.object_filter
+        filters = [
+            # the service filters on height only; the other two axes are checked in select()
+            _filter("Height", minimum=object_filter.size_range[0], maximum=object_filter.size_range[1])
+        ]
+        if object_filter.min_relevance > 0.0:
+            filters.append(_filter("Relevance", minimum=object_filter.min_relevance))
+        for name, values in (
+            ("Feature", object_filter.required_features),
+            ("Profile", object_filter.required_profiles),
+            ("Class", object_filter.required_classes),
+            ("Tag", object_filter.required_tags),
+            ("Country", object_filter.required_countries),
+            ("ScenePOI", object_filter.required_scene_poi_tags),
+        ):
+            filters.extend(_filter(name, value) for value in values)
+        filters.extend(
+            _filter("ArbitraryDictValue", list(key_path), value) for key_path, value in object_filter.required_metadata
+        )
+        return filters
 
     def fetch(self, url: str) -> str | None:
         """Mirror an asset and its whole layer closure locally, over plain HTTPS.
@@ -338,11 +386,27 @@ class SimReadyObjectLibrary:
             .ComputeAlignedRange()
             .GetSize()
         )
-        return ObjectSpec(url, body_path, mass, (size[0], size[1], size[2]), _latest_validation_passed(stage))
+        return ObjectSpec(
+            url,
+            body_path,
+            mass,
+            (size[0], size[1], size[2]),
+            _latest_validation_passed(stage, self.cfg.object_filter.required_features),
+        )
 
 
-def _latest_validation_passed(stage) -> bool:
-    """Return the newest-dated ``FET003_BASE_PHYSX`` verdict, or ``True`` when there is no history."""
+def _filter(name: str, *args, **kwargs):
+    """Build a ``SearchFilter<name>`` from the search package, imported on use."""
+    import simready.search  # noqa: PLC0415
+
+    return getattr(simready.search, f"SearchFilter{name}")(*args, **kwargs)
+
+
+def _latest_validation_passed(stage, features: tuple[str, ...]) -> bool:
+    """Return whether the newest-dated verdict passes for every required feature.
+
+    Assets carrying no validation history are accepted: absence of a verdict is not a failure.
+    """
     metadata = (stage.GetRootLayer().customLayerData or {}).get("SimReady_Metadata")
     if metadata is None:
         return True
@@ -350,18 +414,25 @@ def _latest_validation_passed(stage) -> bool:
     validated = (metadata.get("validation") or {}).get("validated_features") or {}
     if not validated:
         return True
-    return validated[max(validated)].get("FET003_BASE_PHYSX", {}).get("passed") is not False
+    newest = validated[max(validated)]
+    return all(newest.get(feature, {}).get("passed") is not False for feature in features)
 
 
 def _rejection_reason(spec: ObjectSpec | None, cfg: SimReadyObjectFilterCfg) -> str | None:
-    """Return why an asset is unusable for the task, or ``None`` when it passes every filter."""
+    """Return why an asset is unusable for the task, or ``None`` when it passes every filter.
+
+    Only the checks the search service cannot answer are made here. The service has already applied
+    everything it supports, so reaching this point means the asset looked right and now has to prove
+    it is actually usable.
+    """
     if spec is None:
         return "could not be opened"
-    if spec.body_path is None:
+    if cfg.require_rigid_body and spec.body_path is None:
         return "no rigid body (multibody asset: colliders but nothing dynamic)"
     if cfg.require_latest_validation and not spec.validation_passed:
-        return "latest FET003_BASE_PHYSX validation failed"
+        return "newest-dated validation verdict is a failure"
     if spec.max_dim > cfg.size_range[1]:
+        # the service bounded height only, so the widest axis is still unchecked
         return "too large for the workspace"
     if spec.min_dim < cfg.size_range[0]:
         return "too thin for stable contact"

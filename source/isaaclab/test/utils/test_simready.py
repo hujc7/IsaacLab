@@ -57,7 +57,7 @@ class TestRejectionReason:
             ({"dims": (0.4, 0.1, 0.1)}, "too large for the workspace"),
             ({"dims": (0.1, 0.1, 1e-3)}, "too thin for stable contact"),
             ({"body_path": None}, "no rigid body"),
-            ({"validation_passed": False}, "latest FET003_BASE_PHYSX validation failed"),
+            ({"validation_passed": False}, "newest-dated validation verdict is a failure"),
         ],
     )
     def test_unusable_asset_is_rejected_with_a_reason(self, spec_kwargs, expected):
