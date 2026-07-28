@@ -12,8 +12,8 @@ __all__ = [
     "SimReadyObjectLibraryCfg",
 ]
 
-from .simready import ObjectSpec, SimReadyObjectLibrary
-from .simready_cfg import (
+from .object_library import ObjectSpec, SimReadyObjectLibrary
+from .object_library_cfg import (
     DEFAULT_EXCLUDED_PATH_FRAGMENTS,
     DEFAULT_TABLE_TOP_PHRASES,
     SimReadyObjectFilterCfg,

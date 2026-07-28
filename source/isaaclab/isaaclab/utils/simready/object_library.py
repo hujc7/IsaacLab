@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass, fields
 
 from isaaclab.utils.assets import search_simready_usd_paths
 
-from .simready_cfg import SimReadyObjectFilterCfg, SimReadyObjectLibraryCfg
+from .object_library_cfg import SimReadyObjectFilterCfg, SimReadyObjectLibraryCfg
 
 logger = logging.getLogger(__name__)
 

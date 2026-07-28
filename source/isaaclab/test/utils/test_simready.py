@@ -17,7 +17,7 @@ from dataclasses import asdict
 import pytest
 
 from isaaclab.utils.simready import ObjectSpec, SimReadyObjectLibrary, SimReadyObjectLibraryCfg
-from isaaclab.utils.simready.simready import _rejection_reason
+from isaaclab.utils.simready.object_library import _rejection_reason
 
 
 def make_spec(url: str, mass: float | None = 0.2, dims: tuple[float, float, float] = (0.07, 0.07, 0.07), **kwargs):
