@@ -114,6 +114,8 @@ class SimReadyObjectLibrary:
                 logger.warning("SimReady search failed for phrase: %s", phrase, exc_info=True)
                 continue
             for path in matches:
+                if any(fragment in path for fragment in self.cfg.excluded_path_fragments):
+                    continue  # re-check locally: the exclusion above is applied by the service
                 # de-duplicate on file name: the same asset surfaces under many phrases
                 found[path.rsplit("/", 1)[-1]] = path
         return sorted(found.values())
