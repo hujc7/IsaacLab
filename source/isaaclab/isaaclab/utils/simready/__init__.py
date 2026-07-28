@@ -27,6 +27,21 @@ asset discovery, auditing, and preparation entirely.
 Opening assets is the expensive step (each is fetched from remote storage), so every audit is cached
 to JSON. The first resolve of a catalogue costs minutes; later ones are instant, which is what makes
 run-time resolution practical inside a training script.
+
+Usage:
+
+.. code-block:: python
+
+    from isaaclab.utils.simready import SimReadyObjectLibrary, SimReadyObjectLibraryCfg
+
+    # describe what the robot can handle, not what the assets should be
+    cfg = SimReadyObjectLibraryCfg()
+    cfg.object_filter.size_range = (0.02, 0.12)
+    cfg.object_filter.mass_range = (0.005, 1.0)
+
+    # search -> audit -> filter -> write task-ready USDs
+    usd_paths = SimReadyObjectLibrary(cfg).resolve(num_objects=12)
+
 """
 
 from isaaclab.utils.module import lazy_export

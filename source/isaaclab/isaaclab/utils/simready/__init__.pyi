@@ -4,10 +4,18 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 __all__ = [
-    "DEFAULT_PHRASES",
-    "INDUSTRIAL_PATH_FRAGMENTS",
+    "DEFAULT_EXCLUDED_PATH_FRAGMENTS",
+    "DEFAULT_TABLE_TOP_PHRASES",
     "ObjectSpec",
+    "SimReadyObjectFilterCfg",
     "SimReadyObjectLibrary",
+    "SimReadyObjectLibraryCfg",
 ]
 
-from .simready import DEFAULT_PHRASES, INDUSTRIAL_PATH_FRAGMENTS, ObjectSpec, SimReadyObjectLibrary
+from .simready import ObjectSpec, SimReadyObjectLibrary
+from .simready_cfg import (
+    DEFAULT_EXCLUDED_PATH_FRAGMENTS,
+    DEFAULT_TABLE_TOP_PHRASES,
+    SimReadyObjectFilterCfg,
+    SimReadyObjectLibraryCfg,
+)
