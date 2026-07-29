@@ -21,12 +21,14 @@ from isaaclab_assets.robots.shadow_hand import (
     SHADOW_ACTUATED_JOINT_NAMES as ACTUATED_JOINT_NAMES,
 )
 from isaaclab_assets.robots.shadow_hand import (
+    SHADOW_ACTUATED_JOINT_NAMES_NEWTON,
+)
+from isaaclab_assets.robots.shadow_hand import (
     SHADOW_FINGERTIP_BODY_NAMES as FINGERTIP_BODY_NAMES,
 )
 
 __all__ = [
     "ACTUATED_JOINT_NAMES",
-    "ACTUATED_JOINT_NAMES_NEWTON",
     "ACTUATED_JOINT_NAMES_PRESET",
     "FINGERTIP_BODY_NAMES",
     "GOAL_MARKER_CFG",
@@ -35,34 +37,9 @@ __all__ = [
 ]
 
 
-ACTUATED_JOINT_NAMES_NEWTON: list[str] = [
-    "robot0_WRJ1",
-    "robot0_WRJ0",
-    "robot0_FFJ4",
-    "robot0_FFJ3",
-    "robot0_FFJ2",
-    "robot0_MFJ4",
-    "robot0_MFJ3",
-    "robot0_MFJ2",
-    "robot0_RFJ4",
-    "robot0_RFJ3",
-    "robot0_RFJ2",
-    "robot0_LFJ5",
-    "robot0_LFJ4",
-    "robot0_LFJ3",
-    "robot0_LFJ2",
-    "robot0_THJ4",
-    "robot0_THJ3",
-    "robot0_THJ2",
-    "robot0_THJ1",
-    "robot0_THJ0",
-]
-"""Actuated joint names on the production Newton Shadow Hand asset (+1 finger renumbering)."""
-
-
 ACTUATED_JOINT_NAMES_PRESET = preset(
     physx=ACTUATED_JOINT_NAMES,
-    newton_mjwarp=ACTUATED_JOINT_NAMES_NEWTON,
+    newton_mjwarp=SHADOW_ACTUATED_JOINT_NAMES_NEWTON,
     ovphysx=ACTUATED_JOINT_NAMES,
     default=ACTUATED_JOINT_NAMES,
 )

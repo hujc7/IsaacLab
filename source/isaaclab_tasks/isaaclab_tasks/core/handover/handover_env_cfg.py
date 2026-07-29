@@ -341,7 +341,7 @@ class HandoverEnvCfg(DirectMARLEnvCfg):
     # simulation — values mirrored by the manager cfg
     sim: SimulationCfg = SimulationCfg(
         dt=1 / 120,
-        render_interval=2,
+        render_interval=decimation,
         physics_material=RigidBodyMaterialBaseCfg(static_friction=1.0, dynamic_friction=1.0),
         physics=PhysicsCfg(),
     )
