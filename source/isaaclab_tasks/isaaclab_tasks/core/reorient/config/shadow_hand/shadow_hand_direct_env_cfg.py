@@ -55,7 +55,7 @@ class ShadowHandEnvCfg(DirectRLEnvCfg):
     # simulation — values mirrored by the manager cfg (guarded by the value-parity test)
     sim: SimulationCfg = SimulationCfg(
         dt=1 / 120,
-        render_interval=2,
+        render_interval=decimation,
         physics_material=RigidBodyMaterialBaseCfg(static_friction=1.0, dynamic_friction=1.0),
         physics=PhysicsCfg(),
     )
@@ -114,7 +114,7 @@ class ShadowHandOpenAIEnvCfg(ShadowHandEnvCfg):
     # simulation — values mirrored by the manager cfg (guarded by the value-parity test)
     sim: SimulationCfg = SimulationCfg(
         dt=1 / 60,
-        render_interval=3,
+        render_interval=decimation,
         physics_material=RigidBodyMaterialBaseCfg(static_friction=1.0, dynamic_friction=1.0),
         physics=PhysicsCfg(),
     )
