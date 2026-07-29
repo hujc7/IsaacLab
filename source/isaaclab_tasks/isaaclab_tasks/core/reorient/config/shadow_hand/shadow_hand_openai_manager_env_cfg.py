@@ -5,7 +5,6 @@
 
 """Manager-based counterpart of the OpenAI Shadow Hand reorientation variants (FF and LSTM)."""
 
-from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
@@ -13,7 +12,6 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.sensors import JointWrenchSensorCfg
-from isaaclab.sim.spawners.materials import RigidBodyMaterialBaseCfg
 from isaaclab.utils.configclass import configclass
 
 import isaaclab_tasks.core.reorient.mdp as mdp
@@ -27,9 +25,12 @@ from isaaclab_tasks.core.reorient.config.shadow_hand.shadow_hand_common import (
 )
 from isaaclab_tasks.core.reorient.config.shadow_hand.shadow_hand_manager_env_cfg import (
     FullStateWithoutActionCfg,
-    _ShadowHandManagerSceneCfg,
+    ShadowHandManagerSceneCfg,
 )
 from isaaclab_tasks.core.reorient.reorient_common import GOAL_MARKER_POSITION, IN_HAND_POS_OFFSET
+from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import ReorientObjectEnvCfg
+from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import RewardsCfg as ReorientRewardsCfg
+from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import TerminationsCfg as ReorientTerminationsCfg
 from isaaclab_tasks.utils import PresetCfg
 
 from isaaclab_assets.robots.shadow_hand import SHADOW_ACTUATED_JOINT_NAMES, SHADOW_FINGERTIP_BODY_NAMES
@@ -103,20 +104,10 @@ class OpenAIObservationsCfg:
 
 
 @configclass
-class ShadowHandOpenAIManagerSceneCfg(PresetCfg):
-    """Backend-specific OpenAI scene alternatives."""
+class ShadowHandOpenAIManagerSceneCfg(ShadowHandManagerSceneCfg):
+    """Shadow Hand scene with fingertip joint-wrench sensing."""
 
-    @configclass
-    class SceneCfg(_ShadowHandManagerSceneCfg):
-        """Shadow Hand scene with fingertip joint-wrench sensing."""
-
-        joint_wrench = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
-
-    physx = SceneCfg(clone_in_fabric=True)
-    newton_mjwarp = SceneCfg(clone_in_fabric=False)
-    ovphysx = physx
-    newton_kamino = newton_mjwarp
-    default = newton_mjwarp
+    joint_wrench = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
 
 
 _OPENAI_RESET_PARAMS = {
@@ -153,22 +144,12 @@ class OpenAIEventCfg(PresetCfg):
 
 
 @configclass
-class OpenAIRewardsCfg:
-    """Reward terms derived from the Direct OpenAI variant's scales."""
+class OpenAIRewardsCfg(ReorientRewardsCfg):
+    """Shared reward terms tuned to the Direct OpenAI variant's scales."""
 
     track_pos_l2 = RewTerm(
         func=mdp.track_pos_l2,
         weight=-10.0,
-        params={"command_name": "object_pose", "object_cfg": SceneEntityCfg("object")},
-    )
-    track_orientation_inv_l2 = RewTerm(
-        func=mdp.track_orientation_inv_l2,
-        weight=1.0,
-        params={"command_name": "object_pose", "object_cfg": SceneEntityCfg("object"), "rot_eps": 0.1},
-    )
-    success_bonus = RewTerm(
-        func=mdp.success_bonus,
-        weight=250.0,
         params={"command_name": "object_pose", "object_cfg": SceneEntityCfg("object")},
     )
     action_l2 = RewTerm(func=mdp.action_l2, weight=-0.0002)
@@ -177,11 +158,13 @@ class OpenAIRewardsCfg:
         weight=-50.0,
         params={"term_keys": "object_out_of_reach"},
     )
+    joint_vel_l2 = None
+    action_rate_l2 = None
 
 
 @configclass
-class OpenAITerminationsCfg:
-    """Direct-compatible OpenAI termination conditions.
+class OpenAITerminationsCfg(ReorientTerminationsCfg):
+    """Shared terminations with the OpenAI streak cap and success-extended timer.
 
     The Direct variant reports both the streak cap and the elapsed-time limit as
     truncations, so both carry ``time_out=True``.
@@ -212,7 +195,7 @@ class OpenAITerminationsCfg:
 
 
 @configclass
-class ShadowHandOpenAIManagerEnvCfg(ManagerBasedRLEnvCfg):
+class ShadowHandOpenAIManagerEnvCfg(ReorientObjectEnvCfg):
     """Manager counterpart shared by the OpenAI FF and LSTM variants.
 
     Standalone rather than a subclass of :class:`ShadowHandManagerEnvCfg`:
@@ -229,11 +212,11 @@ class ShadowHandOpenAIManagerEnvCfg(ManagerBasedRLEnvCfg):
     events: OpenAIEventCfg = OpenAIEventCfg()
 
     def __post_init__(self):
+        super().__post_init__()
+        # mirrors the Direct cfg
         self.decimation = 3
         self.episode_length_s = 8.0
-        # simulation — mirrors the Direct cfg
         self.sim.dt = 1 / 60
         self.sim.render_interval = self.decimation
-        self.sim.physics_material = RigidBodyMaterialBaseCfg(static_friction=1.0, dynamic_friction=1.0)
         self.sim.physics = PhysicsCfg()
         self.viewer.eye = (2.0, 2.0, 2.0)

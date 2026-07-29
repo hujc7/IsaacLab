@@ -7,15 +7,12 @@
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
-from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
-from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sim.spawners.materials import RigidBodyMaterialBaseCfg
 from isaaclab.utils.configclass import configclass
 
 import isaaclab_tasks.core.reorient.mdp as mdp
@@ -27,6 +24,10 @@ from isaaclab_tasks.core.reorient.config.shadow_hand.shadow_hand_common import (
     PhysicsCfg,
 )
 from isaaclab_tasks.core.reorient.reorient_common import GOAL_MARKER_POSITION, IN_HAND_POS_OFFSET
+from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import EventCfg as ReorientEventCfg
+from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import ReorientObjectEnvCfg, ReorientObjectSceneCfg
+from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import RewardsCfg as ReorientRewardsCfg
+from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import TerminationsCfg as ReorientTerminationsCfg
 from isaaclab_tasks.utils import PresetCfg
 
 from isaaclab_assets.robots.shadow_hand import SHADOW_ACTUATED_JOINT_NAMES, SHADOW_FINGERTIP_BODY_NAMES
@@ -35,31 +36,20 @@ from isaaclab_assets.robots.shadow_hand import SHADOW_ACTUATED_JOINT_NAMES, SHAD
 
 
 @configclass
-class _ShadowHandManagerSceneCfg(InteractiveSceneCfg):
-    """Scene shared by the Shadow Hand Manager backend alternatives."""
+class ShadowHandManagerSceneCfg(ReorientObjectSceneCfg):
+    """Shared reorientation scene with the Shadow hand and a ground plane."""
 
     num_envs = 8192
     env_spacing = 0.75
-    replicate_physics = True
 
-    ground = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
     robot: PresetCfg = ROBOT_CFG
     object: ObjectCfg = OBJECT_CFG
+    ground = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
     light = AssetBaseCfg(
         prim_path="/World/Light",
         spawn=sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75)),
     )
-
-
-@configclass
-class ShadowHandManagerSceneCfg(PresetCfg):
-    """Backend-specific scene cloning settings matching the Direct task."""
-
-    physx = _ShadowHandManagerSceneCfg(clone_in_fabric=True)
-    newton_mjwarp = _ShadowHandManagerSceneCfg(clone_in_fabric=False)
-    ovphysx = physx
-    newton_kamino = newton_mjwarp
-    default = newton_mjwarp
+    dome_light = None
 
 
 @configclass
@@ -149,8 +139,20 @@ class ObservationsCfg:
 
 
 @configclass
-class EventCfg:
-    """Reset distributions matching the Direct task."""
+class EventCfg(ReorientEventCfg):
+    """Shared randomization terms with the Direct task's reset distribution.
+
+    The randomization terms are inherited but dropped: the Direct task has none, and
+    the validated reference runs were produced without them.
+    """
+
+    robot_physics_material = None
+    robot_scale_mass = None
+    robot_joint_stiffness_and_damping = None
+    object_physics_material = None
+    object_scale_mass = None
+    reset_object = None
+    reset_robot_joints = None
 
     reset_state = EventTerm(
         func=mdp.reset_reorient_state,
@@ -165,30 +167,22 @@ class EventCfg:
 
 
 @configclass
-class RewardsCfg:
-    """Reward terms derived from the Direct task's scales."""
+class RewardsCfg(ReorientRewardsCfg):
+    """Shared reward terms tuned to the Direct task's scales."""
 
     track_pos_l2 = RewTerm(
         func=mdp.track_pos_l2,
         weight=-10.0,
         params={"command_name": "object_pose", "object_cfg": SceneEntityCfg("object")},
     )
-    track_orientation_inv_l2 = RewTerm(
-        func=mdp.track_orientation_inv_l2,
-        weight=1.0,
-        params={"command_name": "object_pose", "object_cfg": SceneEntityCfg("object"), "rot_eps": 0.1},
-    )
-    success_bonus = RewTerm(
-        func=mdp.success_bonus,
-        weight=250.0,
-        params={"command_name": "object_pose", "object_cfg": SceneEntityCfg("object")},
-    )
     action_l2 = RewTerm(func=mdp.action_l2, weight=-0.0002)
+    joint_vel_l2 = None
+    action_rate_l2 = None
 
 
 @configclass
-class TerminationsCfg:
-    """Termination conditions matching the Direct task."""
+class TerminationsCfg(ReorientTerminationsCfg):
+    """Shared terminations reduced to the Direct task's fall condition."""
 
     object_out_of_reach = DoneTerm(
         func=mdp.object_away_from_goal,
@@ -198,11 +192,11 @@ class TerminationsCfg:
             "object_cfg": SceneEntityCfg("object"),
         },
     )
-    time_out = DoneTerm(func=mdp.time_out, time_out=True)
+    max_consecutive_success = None
 
 
 @configclass
-class ShadowHandManagerEnvCfg(ManagerBasedRLEnvCfg):
+class ShadowHandManagerEnvCfg(ReorientObjectEnvCfg):
     """Manager-based state Shadow Hand task with Direct-compatible semantics."""
 
     scene: ShadowHandManagerSceneCfg = ShadowHandManagerSceneCfg()
@@ -214,11 +208,9 @@ class ShadowHandManagerEnvCfg(ManagerBasedRLEnvCfg):
     events: EventCfg = EventCfg()
 
     def __post_init__(self):
+        super().__post_init__()
+        # mirrors the Direct cfg
         self.decimation = 2
         self.episode_length_s = 10.0
-        # simulation — mirrors the Direct cfg
-        self.sim.dt = 1 / 120
         self.sim.render_interval = self.decimation
-        self.sim.physics_material = RigidBodyMaterialBaseCfg(static_friction=1.0, dynamic_friction=1.0)
         self.sim.physics = PhysicsCfg()
-        self.viewer.eye = (2.0, 2.0, 2.0)
