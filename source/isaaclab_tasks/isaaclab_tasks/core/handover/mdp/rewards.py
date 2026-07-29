@@ -7,7 +7,15 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch
+
+from isaaclab.managers import SceneEntityCfg
+
+if TYPE_CHECKING:
+    from isaaclab.assets import RigidObject
+    from isaaclab.envs import ManagerBasedRLEnv
 
 
 def handover_reward(goal_distance: torch.Tensor, distance_scale: float) -> torch.Tensor:
@@ -31,3 +39,28 @@ def evaluate_handover_success(
     """
     goal_distance = torch.linalg.norm(object_position - target_position, ord=2, dim=-1)
     return goal_distance < success_distance_threshold, goal_distance
+
+
+def handover_goal_distance_reward(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    distance_scale: float,
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+) -> torch.Tensor:
+    """Reward both hands for holding the object near its goal.
+
+    The Direct environment sums one identical reward per hand, so this returns twice the
+    single-hand value. Success accounting and the goal-distance diagnostics live on
+    :class:`~isaaclab_tasks.core.handover.mdp.commands.HandoverCommand`, which owns the goal.
+
+    Args:
+        env: The environment object.
+        command_name: The command term to be used for extracting the goal.
+        distance_scale: Exponential decay rate over the object-to-goal distance [1/m].
+        object_cfg: The configuration for the scene entity. Default is "object".
+    """
+    object_asset: RigidObject = env.scene[object_cfg.name]
+    object_pos = object_asset.data.root_pos_w.torch - env.scene.env_origins
+    goal_pos = env.command_manager.get_command(command_name)[:, :3]
+    _, goal_distance = evaluate_handover_success(object_pos, goal_pos, 0.0)
+    return 2.0 * handover_reward(goal_distance, distance_scale)
