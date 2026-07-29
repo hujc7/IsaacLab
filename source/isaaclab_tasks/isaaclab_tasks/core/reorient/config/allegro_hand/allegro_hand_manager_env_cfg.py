@@ -57,11 +57,6 @@ class AllegroCubeSceneCfg(PresetCfg):
     ovphysx = physx
     default = newton_mjwarp
 
-    def set_num_envs(self, num_envs: int) -> None:
-        """Set the environment count on every backend alternative."""
-        for scene in (self.physx, self.newton_mjwarp, self.ovphysx, self.default):
-            scene.num_envs = num_envs
-
 
 @configclass
 class CommandsCfg:
@@ -227,26 +222,24 @@ class EventCfg:
 
 @configclass
 class RewardsCfg:
-    """Direct-compatible reward and success accounting."""
+    """Reward terms derived from the Direct task's scales."""
 
-    reorient = RewTerm(
-        func=mdp.ReorientReward,
-        weight=1.0,
-        params={
-            "command_name": "object_pose",
-            "distance_scale": -10.0,
-            "rotation_scale": 1.0,
-            "rotation_epsilon": 0.1,
-            "action_penalty_scale": -0.0002,
-            "success_tolerance": 0.2,
-            "success_bonus": 250.0,
-            "fall_distance": 0.24,
-            "fall_penalty": 0.0,
-            "averaging_factor": 0.1,
-            "success_count_threshold": 1,
-            "object_cfg": SceneEntityCfg("object"),
-        },
+    track_pos_l2 = RewTerm(
+        func=mdp.track_pos_l2,
+        weight=-10.0,
+        params={"command_name": "object_pose", "object_cfg": SceneEntityCfg("object")},
     )
+    track_orientation_inv_l2 = RewTerm(
+        func=mdp.track_orientation_inv_l2,
+        weight=1.0,
+        params={"command_name": "object_pose", "object_cfg": SceneEntityCfg("object"), "rot_eps": 0.1},
+    )
+    success_bonus = RewTerm(
+        func=mdp.success_bonus,
+        weight=250.0,
+        params={"command_name": "object_pose", "object_cfg": SceneEntityCfg("object")},
+    )
+    action_l2 = RewTerm(func=mdp.action_l2, weight=-0.0002)
 
 
 @configclass
@@ -254,7 +247,7 @@ class TerminationsCfg:
     """Termination conditions matching the Direct task."""
 
     object_out_of_reach = DoneTerm(
-        func=mdp.object_reorientation_out_of_reach,
+        func=mdp.object_away_from_goal,
         params={
             "threshold": 0.24,
             "command_name": "object_pose",
@@ -295,7 +288,7 @@ class AllegroCubeEnvCfg(ManagerBasedRLEnvCfg):
     def __post_init__(self):
         self.decimation = 4
         self.episode_length_s = 10.0
-        # simulation — mirrors the Direct cfg (guarded by the value-parity test)
+        # simulation — mirrors the Direct cfg
         self.sim.dt = 1 / 120
         self.sim.render_interval = self.decimation
         self.sim.physics_material = RigidBodyMaterialBaseCfg(static_friction=1.0, dynamic_friction=1.0)

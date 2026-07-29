@@ -183,7 +183,7 @@ def reorient_last_action(env: ManagerBasedRLEnv, action_name: str) -> torch.Tens
     return torch.where((reset_step == common_step_counter).unsqueeze(-1), reset_action, raw_action)
 
 
-class OpenAIPolicyObservation(ManagerTermBase):
+class openai_policy_observation(ManagerTermBase):
     """Apply one stateful noise model to the concatenated OpenAI actor observation."""
 
     def __init__(self, cfg: ObservationTermCfg, env: ManagerBasedRLEnv):

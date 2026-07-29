@@ -110,8 +110,19 @@ def sample_joint_positions_within_limits(
     return torch.clamp(joint_position, min=limits[..., 0], max=limits[..., 1])
 
 
+@torch.jit.script
+def randomize_rotation(rand0, rand1, x_unit_tensor, y_unit_tensor):
+    """Compose ``[-pi, pi]``-scaled random X- and Y-axis rotations into ``(x, y, z, w)`` quaternions."""
+    return quat_mul(
+        quat_from_angle_axis(rand0 * np.pi, x_unit_tensor), quat_from_angle_axis(rand1 * np.pi, y_unit_tensor)
+    )
+
+
 def random_xy_rotation(count: int, device: str | torch.device) -> torch.Tensor:
     """Sample the Direct tasks' sequential random X/Y rotation.
+
+    Callers that already hold the random values and axis tensors, such as the Direct
+    environments' reset paths, use :func:`randomize_rotation` directly instead.
 
     Args:
         count: Number of rotations to sample.
@@ -123,15 +134,4 @@ def random_xy_rotation(count: int, device: str | torch.device) -> torch.Tensor:
     random_values = math_utils.sample_uniform(-1.0, 1.0, (count, 2), device=device)
     x_unit = torch.tensor([1.0, 0.0, 0.0], device=device).repeat(count, 1)
     y_unit = torch.tensor([0.0, 1.0, 0.0], device=device).repeat(count, 1)
-    return math_utils.quat_mul(
-        math_utils.quat_from_angle_axis(random_values[:, 0] * torch.pi, x_unit),
-        math_utils.quat_from_angle_axis(random_values[:, 1] * torch.pi, y_unit),
-    )
-
-
-@torch.jit.script
-def randomize_rotation(rand0, rand1, x_unit_tensor, y_unit_tensor):
-    """Compose ``[-pi, pi]``-scaled random X- and Y-axis rotations into ``(x, y, z, w)`` quaternions."""
-    return quat_mul(
-        quat_from_angle_axis(rand0 * np.pi, x_unit_tensor), quat_from_angle_axis(rand1 * np.pi, y_unit_tensor)
-    )
+    return randomize_rotation(random_values[:, 0], random_values[:, 1], x_unit, y_unit)

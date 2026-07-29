@@ -71,7 +71,7 @@ class OpenAIObservationsCfg:
     @configclass
     class PolicyCfg(ObsGroup):
         openai = ObsTerm(
-            func=mdp.OpenAIPolicyObservation,
+            func=mdp.openai_policy_observation,
             params={
                 "command_name": "object_pose",
                 "action_name": "joint_pos",
@@ -154,49 +154,58 @@ class OpenAIEventCfg(PresetCfg):
 
 @configclass
 class OpenAIRewardsCfg:
-    """Direct-compatible OpenAI reward and success accounting."""
+    """Reward terms derived from the Direct OpenAI variant's scales."""
 
-    reorient = RewTerm(
-        func=mdp.ReorientReward,
+    track_pos_l2 = RewTerm(
+        func=mdp.track_pos_l2,
+        weight=-10.0,
+        params={"command_name": "object_pose", "object_cfg": SceneEntityCfg("object")},
+    )
+    track_orientation_inv_l2 = RewTerm(
+        func=mdp.track_orientation_inv_l2,
         weight=1.0,
-        params={
-            "command_name": "object_pose",
-            "distance_scale": -10.0,
-            "rotation_scale": 1.0,
-            "rotation_epsilon": 0.1,
-            "action_penalty_scale": -0.0002,
-            "success_tolerance": 0.4,
-            "success_bonus": 250.0,
-            "fall_distance": 0.24,
-            "fall_penalty": -50.0,
-            "averaging_factor": 0.1,
-            "success_count_threshold": 1,
-            "action_name": "joint_pos",
-            "object_cfg": SceneEntityCfg("object"),
-        },
+        params={"command_name": "object_pose", "object_cfg": SceneEntityCfg("object"), "rot_eps": 0.1},
+    )
+    success_bonus = RewTerm(
+        func=mdp.success_bonus,
+        weight=250.0,
+        params={"command_name": "object_pose", "object_cfg": SceneEntityCfg("object")},
+    )
+    action_l2 = RewTerm(func=mdp.action_l2, weight=-0.0002)
+    object_away_penalty = RewTerm(
+        func=mdp.is_terminated_term,
+        weight=-50.0,
+        params={"term_keys": "object_out_of_reach"},
     )
 
 
 @configclass
 class OpenAITerminationsCfg:
-    """Direct-compatible OpenAI termination conditions."""
+    """Direct-compatible OpenAI termination conditions.
+
+    The Direct variant reports both the streak cap and the elapsed-time limit as
+    truncations, so both carry ``time_out=True``.
+    """
 
     object_out_of_reach = DoneTerm(
-        func=mdp.object_reorientation_out_of_reach,
+        func=mdp.object_away_from_goal,
         params={
             "threshold": 0.24,
             "command_name": "object_pose",
             "object_cfg": SceneEntityCfg("object"),
         },
     )
+    max_consecutive_success = DoneTerm(
+        func=mdp.max_consecutive_success,
+        time_out=True,
+        params={"num_success": 50, "command_name": "object_pose"},
+    )
     time_out = DoneTerm(
-        func=mdp.ReorientTimeout,
+        func=mdp.reorient_timeout,
         time_out=True,
         params={
             "command_name": "object_pose",
-            "reward_name": "reorient",
             "success_tolerance": 0.4,
-            "max_successes": 50,
             "object_cfg": SceneEntityCfg("object"),
         },
     )
@@ -222,7 +231,7 @@ class ShadowHandOpenAIManagerEnvCfg(ManagerBasedRLEnvCfg):
     def __post_init__(self):
         self.decimation = 3
         self.episode_length_s = 8.0
-        # simulation — mirrors the Direct cfg (guarded by the value-parity test)
+        # simulation — mirrors the Direct cfg
         self.sim.dt = 1 / 60
         self.sim.render_interval = self.decimation
         self.sim.physics_material = RigidBodyMaterialBaseCfg(static_friction=1.0, dynamic_friction=1.0)
