@@ -169,6 +169,15 @@ class SimReadyObjectLibraryCfg:
     the asset host objects to the concurrency.
     """
 
+    layer_workers: int = 8
+    """How many of an asset's layers to fetch at once.
+
+    A SimReady asset is a tree of layers (wrapper, payloads, physics, materials, textures) and each
+    one costs a separate request, so fetching them one at a time makes an asset as slow as the sum
+    of its round-trips. A layer's own references are only known once it has been parsed, so the tree
+    is walked level by level -- but every layer within a level is independent.
+    """
+
     results_per_phrase: int = 100
     """Maximum number of matches to request per search phrase."""
 

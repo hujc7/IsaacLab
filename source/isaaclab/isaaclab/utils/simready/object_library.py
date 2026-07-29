@@ -200,37 +200,55 @@ class SimReadyObjectLibrary:
 
         from pxr import UsdUtils  # noqa: PLC0415
 
-        pending, seen, root_local = [url], set(), None
-        while pending:
-            current = pending.pop()
-            if current in seen:
-                continue
-            seen.add(current)
-            relative = urllib.parse.urlparse(current).path.lstrip("/")
+        def mirror(remote: str) -> str:
+            """Download one layer if it is not already local, and return where it landed."""
+            relative = urllib.parse.urlparse(remote).path.lstrip("/")
             local = os.path.join(self.cfg.download_dir, relative)
-            if root_local is None:
-                root_local = local
+            if os.path.exists(local):
+                return local
             os.makedirs(os.path.dirname(local), exist_ok=True)
-            if not os.path.exists(local):
-                try:
-                    # assets share material and texture layers, so concurrent audits race for the
-                    # same path; download aside and rename, which is atomic on the same filesystem
-                    partial = f"{local}.{os.getpid()}.{threading.get_ident()}.part"
-                    urllib.request.urlretrieve(current, partial)
-                    os.replace(partial, local)
-                except Exception:  # noqa: BLE001 -- a missing shared material must not sink the asset
-                    logger.debug("Failed to mirror layer: %s", current, exc_info=True)
-                    continue
+            try:
+                # assets share material and texture layers, so concurrent fetches race for the same
+                # path; download aside and rename, which is atomic on the same filesystem and means
+                # a reader never observes a partly written layer
+                partial = f"{local}.{os.getpid()}.{threading.get_ident()}.part"
+                urllib.request.urlretrieve(remote, partial)
+                os.replace(partial, local)
+            except Exception:  # noqa: BLE001 -- a missing shared material must not sink the asset
+                logger.debug("Failed to mirror layer: %s", remote, exc_info=True)
+            return local
+
+        def dependencies_of(remote: str, local: str) -> list[str]:
+            """Return the layers ``local`` refers to, resolved against its own location."""
             try:
                 sublayers, references, payloads = UsdUtils.ExtractExternalReferences(local)
             except Exception:  # noqa: BLE001 -- non-USD payloads such as textures have no references
-                continue
-            base = current.rsplit("/", 1)[0] + "/"
+                return []
+            base = remote.rsplit("/", 1)[0] + "/"
+            resolved = []
             for dependency in list(sublayers) + list(references) + list(payloads):
                 if dependency.startswith(("http://", "https://")):
-                    pending.append(dependency)
+                    resolved.append(dependency)
                 elif not os.path.isabs(dependency):
-                    pending.append(urllib.parse.urljoin(base, dependency))
+                    resolved.append(urllib.parse.urljoin(base, dependency))
+            return resolved
+
+        # a layer's references are only known once it has been parsed, so the closure is walked
+        # breadth-first -- but that ordering is per level, not per file, so each level is fetched
+        # at once rather than paying a round-trip per layer in sequence
+        level, seen, root_local = [url], {url}, None
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.cfg.layer_workers) as pool:
+            while level:
+                locals_ = list(pool.map(mirror, level))
+                if root_local is None:
+                    root_local = locals_[0]
+                next_level = []
+                for remote, local in zip(level, locals_):
+                    for dependency in dependencies_of(remote, local):
+                        if dependency not in seen:
+                            seen.add(dependency)
+                            next_level.append(dependency)
+                level = next_level
         return root_local if root_local and os.path.exists(root_local) else None
 
     def audit(self, url: str) -> ObjectSpec | None:
