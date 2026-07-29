@@ -28,6 +28,9 @@ CUBE_HALF_SIZE: tuple[float, float, float] = (0.03, 0.03, 0.03)
 """Half side lengths [m] of the reorientation cube."""
 
 
+# -- cube keypoint helpers, shared by the camera and state observation terms
+
+
 def _cube_corner_offsets(
     size: tuple[float, float, float], num_keypoints: int, device: torch.device | str
 ) -> torch.Tensor:
@@ -100,6 +103,9 @@ def cube_keypoints_from_quat(
     return rotated.reshape(num_envs, num_keypoints * 3)
 
 
+# -- command terms
+
+
 def goal_quat_diff(
     env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg, command_name: str, make_quat_unique: bool
 ) -> torch.Tensor:
@@ -122,6 +128,9 @@ def goal_quat_diff(
         asset.data.root_quat_w.torch, math_utils.quat_conjugate(command_term.quat_command_w)
     )
     return math_utils.quat_unique(quat_error) if make_quat_unique else quat_error
+
+
+# -- fingertip terms
 
 
 def fingertip_pos(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
@@ -164,6 +173,9 @@ class fingertip_wrench(ManagerTermBase):
         return torch.cat((force, torque), dim=-1).reshape(env.num_envs, -1)
 
 
+# -- action terms
+
+
 def reorient_last_action(env: ManagerBasedRLEnv, action_name: str) -> torch.Tensor:
     """Return the Direct-compatible last action across same-step autoreset.
 
@@ -181,6 +193,9 @@ def reorient_last_action(env: ManagerBasedRLEnv, action_name: str) -> torch.Tens
     if reset_action is None or reset_step is None or common_step_counter is None:
         return raw_action
     return torch.where((reset_step == common_step_counter).unsqueeze(-1), reset_action, raw_action)
+
+
+# -- composed observation groups
 
 
 class openai_policy_observation(ManagerTermBase):
@@ -232,12 +247,3 @@ class openai_policy_observation(ManagerTermBase):
         if self._shape_probe_pending:
             return observation
         return self._noise_model(observation)
-
-
-# ---------------------------------------------------------------------------
-# Shadow Hand camera observation terms.
-#
-# These terms wrap the CNN feature pipeline defined in the shadow-hand config
-# package. The config layer imports the mdp layer, so the FeatureExtractor
-# machinery is imported lazily at term construction time.
-# ---------------------------------------------------------------------------

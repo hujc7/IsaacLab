@@ -12,10 +12,10 @@ from isaaclab.sim.spawners.materials import RigidBodyMaterialBaseCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.core.reorient.config.allegro_hand.allegro_hand_common import (
+    ALLEGRO_HAND_ROBOT_CFG,
+    CUBE_CFG,
     GOAL_OBJECT_CFG,
-    OBJECT_CFG,
-    ROBOT_CFG,
-    ObjectCfg,
+    CubeCfg,
     PhysicsCfg,
 )
 
@@ -41,13 +41,13 @@ class AllegroHandEnvCfg(DirectRLEnvCfg):
         physics=PhysicsCfg(),
     )
     # robot
-    robot_cfg: ArticulationCfg = ROBOT_CFG
+    robot_cfg: ArticulationCfg = ALLEGRO_HAND_ROBOT_CFG
 
     actuated_joint_names = ALLEGRO_ACTUATED_JOINT_NAMES
     fingertip_body_names = ALLEGRO_FINGERTIP_BODY_NAMES
 
     # in-hand object
-    object_cfg: ObjectCfg = OBJECT_CFG
+    object_cfg: CubeCfg = CUBE_CFG
     # goal object
     goal_object_cfg: VisualizationMarkersCfg = GOAL_OBJECT_CFG
     # scene

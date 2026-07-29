@@ -12,12 +12,12 @@ from isaaclab.utils.configclass import configclass
 from isaaclab.utils.noise import NoiseModelWithAdditiveBiasCfg
 
 from isaaclab_tasks.core.reorient.config.shadow_hand.shadow_hand_common import (
+    CUBE_CFG,
     GOAL_OBJECT_CFG,
-    OBJECT_CFG,
     OPENAI_ACTION_NOISE_CFG,
     OPENAI_OBSERVATION_NOISE_CFG,
-    ROBOT_CFG,
-    ObjectCfg,
+    SHADOW_HAND_ROBOT_CFG,
+    CubeCfg,
     PhysicsCfg,
     ShadowHandEventCfg,
     ShadowHandRobotCfg,
@@ -61,12 +61,12 @@ class ShadowHandEnvCfg(DirectRLEnvCfg):
     )
 
     # robot
-    robot_cfg: ShadowHandRobotCfg = ROBOT_CFG
+    robot_cfg: ShadowHandRobotCfg = SHADOW_HAND_ROBOT_CFG
     actuated_joint_names = SHADOW_ACTUATED_JOINT_NAMES
     fingertip_body_names = SHADOW_FINGERTIP_BODY_NAMES
 
     # in-hand object
-    object_cfg: ObjectCfg = OBJECT_CFG
+    object_cfg: CubeCfg = CUBE_CFG
     # goal object
     goal_object_cfg: VisualizationMarkersCfg = GOAL_OBJECT_CFG
     # scene — clone_in_fabric is the only backend-varying field (Newton cannot use Fabric cloning)

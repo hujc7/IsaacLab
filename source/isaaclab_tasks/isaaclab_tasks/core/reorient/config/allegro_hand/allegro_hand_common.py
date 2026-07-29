@@ -25,7 +25,7 @@ from isaaclab_assets.robots.allegro import ALLEGRO_HAND_CFG
 
 
 @configclass
-class ObjectCfg(PresetCfg):
+class CubeCfg(PresetCfg):
     physx = RigidObjectCfg(
         prim_path="/World/envs/env_.*/object",
         spawn=sim_utils.UsdFileCfg(
@@ -101,8 +101,8 @@ class PhysicsCfg(PresetCfg):
 
 
 # Scene pieces shared verbatim by the manager-based variant.
-ROBOT_CFG = ALLEGRO_HAND_CFG.replace(prim_path="/World/envs/env_.*/Robot")
-OBJECT_CFG = ObjectCfg()
+ALLEGRO_HAND_ROBOT_CFG = ALLEGRO_HAND_CFG.replace(prim_path="/World/envs/env_.*/Robot")
+CUBE_CFG = CubeCfg()
 GOAL_OBJECT_CFG = VisualizationMarkersCfg(
     prim_path="/Visuals/goal_marker",
     markers={

@@ -173,7 +173,7 @@ class ShadowHandRobotCfg(PresetCfg):
 
 
 @configclass
-class ObjectCfg(PresetCfg):
+class CubeCfg(PresetCfg):
     physx = RigidObjectCfg(
         prim_path="/World/envs/env_.*/object",
         spawn=sim_utils.UsdFileCfg(
@@ -237,8 +237,8 @@ class PhysicsCfg(PresetCfg):
 
 
 # Scene pieces shared verbatim by the manager-based variants.
-ROBOT_CFG = ShadowHandRobotCfg()
-OBJECT_CFG = ObjectCfg()
+SHADOW_HAND_ROBOT_CFG = ShadowHandRobotCfg()
+CUBE_CFG = CubeCfg()
 
 GOAL_OBJECT_CFG = VisualizationMarkersCfg(
     prim_path="/Visuals/goal_marker",

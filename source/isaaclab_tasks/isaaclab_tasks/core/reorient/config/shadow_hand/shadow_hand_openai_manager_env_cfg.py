@@ -88,6 +88,7 @@ class OpenAIObservationsCfg:
 
     @configclass
     class CriticCfg(FullStateWithoutActionCfg):
+        # -- contact sensing
         fingertip_wrench = ObsTerm(
             func=mdp.fingertip_wrench,
             scale=10.0,
@@ -97,6 +98,7 @@ class OpenAIObservationsCfg:
                 )
             },
         )
+        # -- action
         last_action = ObsTerm(func=mdp.reorient_last_action, params={"action_name": "joint_pos"})
 
     policy: PolicyCfg = PolicyCfg()

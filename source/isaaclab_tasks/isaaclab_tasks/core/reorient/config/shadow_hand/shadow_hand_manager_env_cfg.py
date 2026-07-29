@@ -17,14 +17,15 @@ from isaaclab.utils.configclass import configclass
 
 import isaaclab_tasks.core.reorient.mdp as mdp
 from isaaclab_tasks.core.reorient.config.shadow_hand.shadow_hand_common import (
+    CUBE_CFG,
     GOAL_OBJECT_CFG,
-    OBJECT_CFG,
-    ROBOT_CFG,
-    ObjectCfg,
+    SHADOW_HAND_ROBOT_CFG,
+    CubeCfg,
+    NewtonEventCfg,
     PhysicsCfg,
+    PhysxEventCfg,
 )
 from isaaclab_tasks.core.reorient.reorient_common import GOAL_MARKER_POSITION, IN_HAND_POS_OFFSET
-from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import EventCfg as ReorientEventCfg
 from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import ReorientObjectEnvCfg, ReorientObjectSceneCfg
 from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import RewardsCfg as ReorientRewardsCfg
 from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import TerminationsCfg as ReorientTerminationsCfg
@@ -42,8 +43,8 @@ class ShadowHandManagerSceneCfg(ReorientObjectSceneCfg):
     num_envs = 8192
     env_spacing = 0.75
 
-    robot: PresetCfg = ROBOT_CFG
-    object: ObjectCfg = OBJECT_CFG
+    robot: PresetCfg = SHADOW_HAND_ROBOT_CFG
+    object: CubeCfg = CUBE_CFG
     ground = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
     light = AssetBaseCfg(
         prim_path="/World/Light",
@@ -84,6 +85,7 @@ class ActionsCfg:
 class FullStateWithoutActionCfg(ObsGroup):
     """Shared first 137 dimensions of the full Shadow state."""
 
+    # -- robot
     joint_pos = ObsTerm(
         func=mdp.joint_pos_limit_normalized,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*", preserve_order=False)},
@@ -93,6 +95,7 @@ class FullStateWithoutActionCfg(ObsGroup):
         scale=0.2,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*", preserve_order=False)},
     )
+    # -- object
     object_pos = ObsTerm(func=mdp.root_pos_w, params={"asset_cfg": SceneEntityCfg("object")})
     object_quat = ObsTerm(
         func=mdp.root_quat_w,
@@ -104,11 +107,13 @@ class FullStateWithoutActionCfg(ObsGroup):
         scale=0.2,
         params={"asset_cfg": SceneEntityCfg("object")},
     )
+    # -- command
     goal_pose = ObsTerm(func=mdp.generated_commands, params={"command_name": "object_pose"})
     goal_quat_diff = ObsTerm(
         func=mdp.goal_quat_diff,
         params={"asset_cfg": SceneEntityCfg("object"), "command_name": "object_pose", "make_quat_unique": False},
     )
+    # -- robot fingertips
     fingertip_pos = ObsTerm(
         func=mdp.fingertip_pos,
         params={"asset_cfg": SceneEntityCfg("robot", body_names=SHADOW_FINGERTIP_BODY_NAMES, preserve_order=False)},
@@ -133,37 +138,43 @@ class ObservationsCfg:
 
     @configclass
     class PolicyCfg(FullStateWithoutActionCfg):
+        # -- action
         last_action = ObsTerm(func=mdp.reorient_last_action, params={"action_name": "joint_pos"})
 
     policy: PolicyCfg = PolicyCfg()
 
 
+_RESET_PARAMS = {
+    "position_noise": 0.01,
+    "joint_position_noise": 0.2,
+    "joint_velocity_noise": 0.0,
+    "action_name": "joint_pos",
+}
+
+
 @configclass
-class EventCfg(ReorientEventCfg):
-    """Shared randomization terms with the Direct task's reset distribution.
+class ShadowPhysxEventCfg(PhysxEventCfg):
+    """PhysX randomization and state reset events."""
 
-    The randomization terms are inherited but dropped: the Direct task has none, and
-    the validated reference runs were produced without them.
-    """
+    reset_state = EventTerm(func=mdp.reset_reorient_state, mode="reset", params=_RESET_PARAMS)
 
-    robot_physics_material = None
-    robot_scale_mass = None
-    robot_joint_stiffness_and_damping = None
-    object_physics_material = None
-    object_scale_mass = None
-    reset_object = None
-    reset_robot_joints = None
 
-    reset_state = EventTerm(
-        func=mdp.reset_reorient_state,
-        mode="reset",
-        params={
-            "position_noise": 0.01,
-            "joint_position_noise": 0.2,
-            "joint_velocity_noise": 0.0,
-            "action_name": "joint_pos",
-        },
-    )
+@configclass
+class ShadowNewtonEventCfg(NewtonEventCfg):
+    """Newton randomization and state reset events."""
+
+    reset_state = EventTerm(func=mdp.reset_reorient_state, mode="reset", params=_RESET_PARAMS)
+
+
+@configclass
+class EventCfg(PresetCfg):
+    """Backend-specific event alternatives, matching the Direct task's randomization."""
+
+    physx = ShadowPhysxEventCfg()
+    newton_mjwarp = ShadowNewtonEventCfg()
+    ovphysx = physx
+    newton_kamino = newton_mjwarp
+    default = newton_mjwarp
 
 
 @configclass

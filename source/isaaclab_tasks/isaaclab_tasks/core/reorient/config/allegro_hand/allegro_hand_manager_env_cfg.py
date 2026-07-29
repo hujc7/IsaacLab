@@ -17,10 +17,10 @@ from isaaclab.utils.configclass import configclass
 
 import isaaclab_tasks.core.reorient.mdp as mdp
 from isaaclab_tasks.core.reorient.config.allegro_hand.allegro_hand_common import (
+    ALLEGRO_HAND_ROBOT_CFG,
+    CUBE_CFG,
     GOAL_OBJECT_CFG,
-    OBJECT_CFG,
-    ROBOT_CFG,
-    ObjectCfg,
+    CubeCfg,
     PhysicsCfg,
 )
 from isaaclab_tasks.core.reorient.reorient_common import GOAL_MARKER_POSITION, IN_HAND_POS_OFFSET
@@ -39,8 +39,8 @@ class AllegroCubeSceneCfg(ReorientObjectSceneCfg):
     num_envs = 8192
     env_spacing = 0.75
 
-    robot: ArticulationCfg = ROBOT_CFG
-    object: ObjectCfg = OBJECT_CFG
+    robot: ArticulationCfg = ALLEGRO_HAND_ROBOT_CFG
+    object: CubeCfg = CUBE_CFG
     ground = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
     light = AssetBaseCfg(
         prim_path="/World/Light",
@@ -83,6 +83,7 @@ class ObservationsCfg:
 
     @configclass
     class PolicyCfg(ObsGroup):
+        # -- robot
         joint_pos = ObsTerm(
             func=mdp.joint_pos_limit_normalized,
             params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*", preserve_order=False)},
@@ -92,6 +93,7 @@ class ObservationsCfg:
             scale=0.2,
             params={"asset_cfg": SceneEntityCfg("robot", joint_names=".*", preserve_order=False)},
         )
+        # -- object
         object_pos = ObsTerm(func=mdp.root_pos_w, params={"asset_cfg": SceneEntityCfg("object")})
         object_quat = ObsTerm(
             func=mdp.root_quat_w,
@@ -103,11 +105,13 @@ class ObservationsCfg:
             scale=0.2,
             params={"asset_cfg": SceneEntityCfg("object")},
         )
+        # -- command
         goal_pose = ObsTerm(func=mdp.generated_commands, params={"command_name": "object_pose"})
         goal_quat_diff = ObsTerm(
             func=mdp.goal_quat_diff,
             params={"asset_cfg": SceneEntityCfg("object"), "command_name": "object_pose", "make_quat_unique": False},
         )
+        # -- robot fingertips
         fingertip_pos = ObsTerm(
             func=mdp.fingertip_pos,
             params={
@@ -126,6 +130,7 @@ class ObservationsCfg:
                 "asset_cfg": SceneEntityCfg("robot", body_names=ALLEGRO_FINGERTIP_BODY_NAMES, preserve_order=False)
             },
         )
+        # -- action
         last_action = ObsTerm(func=mdp.reorient_last_action, params={"action_name": "joint_pos"})
 
         def __post_init__(self):
@@ -139,10 +144,8 @@ class ObservationsCfg:
 class EventCfg(ReorientEventCfg):
     """Shared randomization terms with the Direct task's reset distribution.
 
-    The randomization terms are inherited but dropped by default (see
-    :attr:`AllegroCubeEnvCfg.enable_domain_randomization`): the Direct task has no
-    domain randomization, and the validated benchmark thresholds were calibrated
-    without it. Enabling them requires retraining.
+    The randomization terms are inherited and gated by
+    :attr:`AllegroCubeEnvCfg.enable_domain_randomization`.
     """
 
     reset_object = None
@@ -201,12 +204,11 @@ class AllegroCubeEnvCfg(ReorientObjectEnvCfg):
     terminations: TerminationsCfg = TerminationsCfg()
     events: EventCfg = EventCfg()
 
-    enable_domain_randomization: bool = False
-    """Enable the legacy startup domain-randomization terms.
+    enable_domain_randomization: bool = True
+    """Apply the shared startup domain-randomization terms.
 
-    Disabled by default: the validated reference training runs and the benchmark
-    thresholds were produced without domain randomization, so enabling it
-    requires retraining and threshold recalibration.
+    The Direct Allegro task has no randomization, so disable this to compare the two
+    workflows directly. Changing it requires retraining.
     """
 
     _DOMAIN_RANDOMIZATION_TERMS = (
