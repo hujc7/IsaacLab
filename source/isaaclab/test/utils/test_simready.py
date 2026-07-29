@@ -256,3 +256,23 @@ class TestResolutionCache:
         entry = next(iter(recorded.values()))
         assert entry["num_objects"] == 3
         assert len(entry["assets"]) == 3
+
+    def test_a_cached_launch_needs_neither_network_nor_the_search_package(self, tmp_path):
+        """First launch resolves against the service; every later one must not reach it at all.
+
+        The task resolves its objects while its configuration is built, so a cached launch has to
+        work on a machine that has no network and no optional search package installed.
+        """
+        self.searches = 0
+        specs = [make_spec(f"a/O{i}/a.usd", mass=0.1 + i * 0.05) for i in range(6)]
+        first = self._library(tmp_path, specs)
+        first.resolve(4)
+
+        cached = self._library(tmp_path, specs)
+
+        def unavailable():
+            raise ModuleNotFoundError("No module named 'simready'")
+
+        cached.search = unavailable
+
+        assert len(cached.resolve(4)) == 4
