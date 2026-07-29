@@ -83,9 +83,6 @@ class ReorientCommand(CommandTerm):
         self.metrics["position_error"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["goals_reached"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["success_rate"] = torch.zeros(self.num_envs, device=self.device)
-        # -- per-attempt success accounting: each success-driven resample completes one attempt;
-        #    the trailing attempt at episode end counts as one unsuccessful attempt.
-        self._completed_attempts = torch.zeros(self.num_envs, device=self.device)
         # An auto-reset lands immediately before CommandManager.compute(); suppress success
         # handling for those environments until one new physics step has run.
         self._skip_success_update = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
@@ -134,16 +131,13 @@ class ReorientCommand(CommandTerm):
         self.metrics["goals_reached"].add_(success_flags)
 
     def reset(self, env_ids: Sequence[int] | None = None) -> dict[str, float]:
-        # Snapshot per-attempt success rate BEFORE the base class logs and zeros metrics.
-        # success_rate = completed_attempts / (completed_attempts + 1 trailing in-progress).
+        # Snapshot the episode outcome BEFORE the base class logs and zeros the metrics.
         if env_ids is None:
             env_ids = slice(None)
-        completed = self._completed_attempts[env_ids]
-        self.metrics["success_rate"][env_ids] = completed / (completed + 1.0)
+        self.metrics["success_rate"][env_ids] = (
+            self.metrics["goals_reached"][env_ids] >= self.cfg.success_count_threshold
+        ).float()
         extras = super().reset(env_ids)
-        # super().reset() invoked _resample_command for the new initial goal, which
-        # incremented _completed_attempts; zero it back out so the new episode starts clean.
-        self._completed_attempts[env_ids] = 0.0
         reset_buf = getattr(self._env, "reset_buf", None)
         self._skip_success_update[env_ids] = False if reset_buf is None else reset_buf[env_ids]
         # Route success_rate to the unified ``Metrics/success_rate`` path (shared TensorBoard
@@ -153,9 +147,6 @@ class ReorientCommand(CommandTerm):
         return extras
 
     def _resample_command(self, env_ids: Sequence[int]):
-        # Each call corresponds to a success-driven (or initial) resample; count it as a
-        # completed attempt. The post-reset increment is cleared by ``reset()`` afterwards.
-        self._completed_attempts[env_ids] += 1.0
         # sample new orientation targets
         rand_floats = 2.0 * torch.rand((len(env_ids), 2), device=self.device) - 1.0
         # rotate randomly about x-axis and then y-axis
@@ -232,6 +223,9 @@ class ReorientCommandCfg(CommandTermCfg):
 
     If True, the quaternion is made unique by ensuring the real part is positive.
     """
+
+    success_count_threshold: int = 1
+    """Minimum number of goals reached in an episode to count it as a successful episode."""
 
     fixed_marker_pos: tuple[float, float, float] | None = None
     """Fixed goal-marker position [m] in each environment, or ``None`` to follow the goal."""

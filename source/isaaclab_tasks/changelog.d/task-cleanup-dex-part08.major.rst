@@ -32,3 +32,12 @@ Changed
 * Renamed the per-robot scene constants to name what they hold: ``ROBOT_CFG``
   becomes ``SHADOW_HAND_ROBOT_CFG`` or ``ALLEGRO_HAND_ROBOT_CFG``,
   ``OBJECT_CFG`` becomes ``CUBE_CFG``, and ``ObjectCfg`` becomes ``CubeCfg``.
+
+Fixed
+^^^^^
+
+* Fixed the manager-based reorientation tasks not reporting
+  ``Metrics/success_rate``.
+* Fixed ``Metrics/success_rate`` on the manager-based reorientation tasks counting
+  completed goal attempts rather than the per-episode success bit the Direct tasks
+  report, so the two were not comparable.

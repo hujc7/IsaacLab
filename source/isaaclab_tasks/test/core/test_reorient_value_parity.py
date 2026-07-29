@@ -45,6 +45,9 @@ def test_manager_config_matches_direct_values(direct_cls, manager_cls):
     )
     assert manager.commands.object_pose.orientation_success_threshold == pytest.approx(direct.success_tolerance)
     assert manager.terminations.object_out_of_reach.params["threshold"] == pytest.approx(direct.fall_dist)
+    # Both workflows publish ``Metrics/success_rate``; the curves only compare if the
+    # episode-success bit is drawn at the same goal count.
+    assert manager.commands.object_pose.success_count_threshold == direct.success_count_threshold
 
     # The Direct tasks fold the streak cap into their time-out signal.
     streak_cap = getattr(manager.terminations, "max_consecutive_success", None)
