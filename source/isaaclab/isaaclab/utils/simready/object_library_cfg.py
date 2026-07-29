@@ -160,6 +160,15 @@ class SimReadyObjectLibraryCfg:
     service_endpoint: str = SIMREADY_SEARCH_SERVICE_ENDPOINT
     """URL of the USD-Search service."""
 
+    audit_workers: int = 16
+    """How many candidates to audit concurrently.
+
+    Auditing is bound by per-file network round-trips rather than by bandwidth or CPU: an asset's
+    layers are fetched one request at a time, while opening the stage and measuring it costs
+    milliseconds. Auditing several assets at once therefore scales close to linearly. Lower this if
+    the asset host objects to the concurrency.
+    """
+
     results_per_phrase: int = 100
     """Maximum number of matches to request per search phrase."""
 

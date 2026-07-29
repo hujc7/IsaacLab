@@ -7,10 +7,12 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import logging
 import os
 import re
+import threading
 from dataclasses import asdict, dataclass, fields
 
 from .object_library_cfg import SimReadyObjectFilterCfg, SimReadyObjectLibraryCfg
@@ -211,7 +213,11 @@ class SimReadyObjectLibrary:
             os.makedirs(os.path.dirname(local), exist_ok=True)
             if not os.path.exists(local):
                 try:
-                    urllib.request.urlretrieve(current, local)
+                    # assets share material and texture layers, so concurrent audits race for the
+                    # same path; download aside and rename, which is atomic on the same filesystem
+                    partial = f"{local}.{os.getpid()}.{threading.get_ident()}.part"
+                    urllib.request.urlretrieve(current, partial)
+                    os.replace(partial, local)
                 except Exception:  # noqa: BLE001 -- a missing shared material must not sink the asset
                     logger.debug("Failed to mirror layer: %s", current, exc_info=True)
                     continue
@@ -266,17 +272,17 @@ class SimReadyObjectLibrary:
 
         kept: list[ObjectSpec] = []
         dropped: dict[str, int] = {}
-        for index, url in enumerate(candidates):
-            spec = self.audit(url)
-            reason = _rejection_reason(spec, object_filter)
-            if reason is None:
-                kept.append(spec)
-            else:
-                dropped[reason] = dropped.get(reason, 0) + 1
-            # this is the one slow stage -- on a cold cache each asset is a fetch and a stage open,
-            # so report progress rather than leaving minutes of silence
-            if (index + 1) % _AUDIT_PROGRESS_INTERVAL == 0:
-                logger.info("Audited %d/%d candidates, kept %d.", index + 1, len(candidates), len(kept))
+        # auditing is entirely network-bound -- opening a stage and measuring it costs milliseconds,
+        # while mirroring its layers costs seconds -- so candidates are audited concurrently
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.cfg.audit_workers) as pool:
+            for index, spec in enumerate(pool.map(self.audit, candidates)):
+                reason = _rejection_reason(spec, object_filter)
+                if reason is None:
+                    kept.append(spec)
+                else:
+                    dropped[reason] = dropped.get(reason, 0) + 1
+                if (index + 1) % _AUDIT_PROGRESS_INTERVAL == 0:
+                    logger.info("Audited %d/%d candidates, kept %d.", index + 1, len(candidates), len(kept))
         self.save_cache()
 
         if object_filter.distinct_families:
