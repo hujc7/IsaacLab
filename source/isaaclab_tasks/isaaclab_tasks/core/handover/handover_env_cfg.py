@@ -11,7 +11,6 @@ from isaaclab_physx.physics import PhysxCfg
 import isaaclab.envs.mdp as mdp
 import isaaclab.sim as sim_utils
 import isaaclab.utils.math as math_utils
-from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, RigidObjectCfg
 from isaaclab.envs import DirectMARLEnvCfg
 from isaaclab.managers import EventTermCfg as EventTerm
@@ -23,15 +22,14 @@ from isaaclab.sim.spawners.materials import RigidBodyMaterialBaseCfg
 from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.core.handover.handover_common import (
-    ACTUATED_JOINT_NAMES_PRESET,
+    ACTUATED_JOINT_NAMES,
     FINGERTIP_BODY_NAMES,
     GOAL_MARKER_CFG,
     OBJECT_RADIUS,
 )
-from isaaclab_tasks.core.reorient.config.shadow_hand.shadow_hand_common import ShadowHandRobotCfg
 from isaaclab_tasks.utils import PresetCfg, preset
 
-from isaaclab_assets.robots.shadow_hand import SHADOW_HAND_CFG
+from isaaclab_assets.robots.shadow_hand import SHADOW_HAND_CFG, SHADOW_HAND_NEWTON_CFG
 
 
 @configclass
@@ -133,13 +131,6 @@ class EventCfg:
     )
 
 
-# Reuse the single-agent Shadow Hand Newton port (USD path, ``rot`` reapplication
-# workaround, effort limits, joint regex). The multi-agent variant only diverges
-# in actuator gains (stiffness/damping bumped for the catch task) and adds a
-# ``distal_passive`` override for the J1 USD-baked values.
-_SHADOW_HAND_NEWTON_CFG = ShadowHandRobotCfg().newton_mjwarp
-
-
 def _shadow_hand_cfg(
     prim_path: str,
     init_pos: tuple[float, float, float],
@@ -151,72 +142,29 @@ def _shadow_hand_cfg(
     differences (right vs left) come from the caller's *prim_path* / *init_pos* /
     *init_rot* — the gain tuning is identical on both hands.
 
-    The Newton variant layers two :class:`~isaaclab.actuators.ImplicitActuatorCfg`
-    overrides on top of the single-agent Newton port:
-
-    * ``fingers``: ``stiffness=20.0`` / ``damping=2.0``. PhysX reaches comparable joint
-      authority at lower nominal gains through fixed-tendon properties and per-substep
-      solver iterations, neither of which MJWarp's implicit-PD path has.
-    * ``distal_passive`` on the four ``robot0_(FF|MF|RF|LF)J1`` distal joints:
-      ``stiffness=10.0`` / ``damping=0.1``. The Newton USD bakes far stiffer values on
-      these joints, which fight the ``MjcTendon`` coupling; keeping them near-passive
-      lets the tendon constraint dominate.
+    The Newton variant reuses the shared actuator defined on ``SHADOW_HAND_NEWTON_CFG``,
+    raising its gains to ``20.0`` / ``2.0`` -- the catch needs more joint authority than
+    reorientation. The scalar replaces the per-joint gain mapping, so it applies to the whole
+    actuator group.
     """
     physx_cfg = SHADOW_HAND_CFG.replace(prim_path=prim_path).replace(
         init_state=ArticulationCfg.InitialStateCfg(pos=init_pos, rot=init_rot, joint_pos={".*": 0.0})
     )
-    # Newton's importer bakes the asset's native root orientation into the
-    # root joint (see the note on _SHADOW_HAND_NEWTON_CFG.init_state), so the
-    # task rotation must compose with that base rotation rather than replace
-    # it — replacing left both palms heading 90 degrees off and the object
-    # never rested in the right hand.
-    # Composed in float64 via the shared (x, y, z, w) quaternion product,
-    # matching the previously used wp.quatd math bit-for-bit.
+    # Newton's importer bakes the asset's root orientation into the root joint (see the note on
+    # SHADOW_HAND_NEWTON_CFG.init_state), so the task rotation must compose with it rather than
+    # replace it — replacing leaves both palms rotated 90 degrees.
     newton_rot = tuple(
         math_utils.quat_mul(
             torch.tensor(init_rot, dtype=torch.float64),
-            torch.tensor(_SHADOW_HAND_NEWTON_CFG.init_state.rot, dtype=torch.float64),
+            torch.tensor(SHADOW_HAND_NEWTON_CFG.init_state.rot, dtype=torch.float64),
         ).tolist()
     )
-    newton_cfg = _SHADOW_HAND_NEWTON_CFG.replace(
+    newton_mjwarp_cfg = SHADOW_HAND_NEWTON_CFG.replace(
         prim_path=prim_path,
-        init_state=_SHADOW_HAND_NEWTON_CFG.init_state.replace(pos=init_pos, rot=newton_rot),
+        init_state=SHADOW_HAND_NEWTON_CFG.init_state.replace(pos=init_pos, rot=newton_rot),
         actuators={
-            # The inherited "fingers" expression predates the renamed Newton
-            # asset: on the renumbered chains it drives the tendon-coupled
-            # distal J1 joints and leaves the J4 knuckles (and the LFJ5
-            # metacarpal) without a drive. Redeclare it against the renamed
-            # joints so the actuated set matches the PhysX hand physically.
-            "fingers": _SHADOW_HAND_NEWTON_CFG.actuators["fingers"].replace(
-                joint_names_expr=[
-                    "robot0_WR.*",
-                    "robot0_(FF|MF|RF)J(4|3|2)",
-                    "robot0_LFJ(5|4|3|2)",
-                    "robot0_THJ[0-4]",
-                ],
-                effort_limit_sim={
-                    "robot0_WRJ1": 4.785,
-                    "robot0_WRJ0": 2.175,
-                    "robot0_(FF|MF|RF|LF)J2": 0.7245,
-                    "robot0_FFJ(4|3)": 0.9,
-                    "robot0_MFJ(4|3)": 0.9,
-                    "robot0_RFJ(4|3)": 0.9,
-                    "robot0_LFJ(5|4|3)": 0.9,
-                    "robot0_THJ4": 2.3722,
-                    "robot0_THJ3": 1.45,
-                    "robot0_THJ(2|1)": 0.99,
-                    "robot0_THJ0": 0.81,
-                },
-                stiffness=20.0,
-                damping=2.0,
-            ),
-            "distal_passive": ImplicitActuatorCfg(
-                joint_names_expr=["robot0_(FF|MF|RF|LF)J1"],
-                stiffness=10.0,
-                damping=0.1,
-                friction=1e-2,
-                armature=2e-3,
-            ),
+            **SHADOW_HAND_NEWTON_CFG.actuators,
+            "fingers": SHADOW_HAND_NEWTON_CFG.actuators["fingers"].replace(stiffness=20.0, damping=2.0),
         },
     )
     ovphysx_cfg = SHADOW_HAND_CFG.replace(
@@ -225,7 +173,7 @@ def _shadow_hand_cfg(
         spawn=SHADOW_HAND_CFG.spawn.replace(fixed_tendons_props=None),
         init_state=SHADOW_HAND_CFG.init_state.replace(pos=init_pos, rot=init_rot),
     )
-    return preset(default=physx_cfg, physx=physx_cfg, newton_mjwarp=newton_cfg, ovphysx=ovphysx_cfg)
+    return preset(default=newton_mjwarp_cfg, physx=physx_cfg, newton_mjwarp=newton_mjwarp_cfg, ovphysx=ovphysx_cfg)
 
 
 # Per-hand presets shared by the Direct environment and the manager scene.
@@ -289,7 +237,7 @@ class ObjectCfg(PresetCfg):
         ),
         init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, -0.39, 0.54), rot=(0.0, 0.0, 0.0, 1.0)),
     )
-    ovphysx = physx  # OvPhysX is PhysX-based; reuse the PhysX-tuned rigid sphere
+    ovphysx = physx
     default = newton_mjwarp
 
 
@@ -316,11 +264,11 @@ class PhysicsCfg(PresetCfg):
             nconmax=70,
             impratio=10.0,
             cone="elliptic",
-            update_data_interval=2,
+            update_data_interval=4,
             ccd_iterations=50,  # bumped from default 35 for multi-finger contact geometry
         ),
-        # sustained ball-palm contact against the near-passive distal joints diverges
-        # at the single-agent port's 2 substeps
+        # 4 substeps (vs reorient's 2): sustained ball-palm contact drives a small fraction of
+        # envs to NaN at 2.
         num_substeps=4,
         debug_mode=False,
     )
@@ -349,7 +297,7 @@ class HandoverEnvCfg(DirectMARLEnvCfg):
     # robot
     right_robot_cfg: PresetCfg = RIGHT_HAND_CFG
     left_robot_cfg: PresetCfg = LEFT_HAND_CFG
-    actuated_joint_names: PresetCfg = ACTUATED_JOINT_NAMES_PRESET
+    actuated_joint_names = ACTUATED_JOINT_NAMES
     fingertip_body_names = FINGERTIP_BODY_NAMES
 
     # in-hand object
