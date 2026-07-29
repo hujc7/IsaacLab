@@ -154,22 +154,13 @@ def _shadow_hand_cfg(
     The Newton variant layers two :class:`~isaaclab.actuators.ImplicitActuatorCfg`
     overrides on top of the single-agent Newton port:
 
-    * ``fingers`` actuator: ``stiffness=20.0`` / ``damping=2.0`` (vs PhysX's
-      ``5.0`` / ``0.5`` on wrists and ``1.0`` / ``0.1`` on fingers). PhysX layers
-      ``fixed_tendons_props(limit_stiffness=30, damping=0.1)`` and runs
-      ``solver_position_iteration_count=8`` per substep — both amplify the
-      effective torque per unit nominal gain. Newton's MJWarp implicit-PD path
-      has neither, so a larger nominal gain is needed for comparable joint
-      authority. ``20.0`` / ``2.0`` is the smallest tested setting at which
-      MAPPO learns the catch (mean reward at iter 200 / 2048 envs goes from
-      ~27 at PhysX-mirrored gains to ~777).
-    * ``distal_passive`` on the four ``robot0_(FF|MF|RF|LF)J1`` distal joints
-      (named ``J0`` before the current asset release) with ``stiffness=10.0`` /
-      ``damping=0.1``. The Newton USD bakes ``stiffness=286 / damping=57`` on
-      these joints from the MJCF→USD translation, which fights the
-      ``MjcTendon`` coupling and bounces the ball. ``stiffness=10`` (~1/3 of
-      PhysX's ``limit_stiffness=30``) keeps the joints near-passive while the
-      tendon constraint dominates.
+    * ``fingers``: ``stiffness=20.0`` / ``damping=2.0``. PhysX reaches comparable joint
+      authority at lower nominal gains through fixed-tendon properties and per-substep
+      solver iterations, neither of which MJWarp's implicit-PD path has.
+    * ``distal_passive`` on the four ``robot0_(FF|MF|RF|LF)J1`` distal joints:
+      ``stiffness=10.0`` / ``damping=0.1``. The Newton USD bakes far stiffer values on
+      these joints, which fight the ``MjcTendon`` coupling; keeping them near-passive
+      lets the tendon constraint dominate.
     """
     physx_cfg = SHADOW_HAND_CFG.replace(prim_path=prim_path).replace(
         init_state=ArticulationCfg.InitialStateCfg(pos=init_pos, rot=init_rot, joint_pos={".*": 0.0})
@@ -328,9 +319,8 @@ class PhysicsCfg(PresetCfg):
             update_data_interval=2,
             ccd_iterations=50,  # bumped from default 35 for multi-finger contact geometry
         ),
-        # 4 substeps (vs the single-agent port's 2): sustained ball-palm contact
-        # against the near-passive distal joints explodes ~0.7% of 8192 envs to
-        # NaN at 2 substeps (zero-action probe, 300 steps); 4 substeps shows none.
+        # sustained ball-palm contact against the near-passive distal joints diverges
+        # at the single-agent port's 2 substeps
         num_substeps=4,
         debug_mode=False,
     )

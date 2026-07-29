@@ -22,17 +22,17 @@ from isaaclab_tasks.core.reorient.config.shadow_hand.shadow_hand_manager_env_cfg
     ShadowHandManagerSceneCfg,
 )
 from isaaclab_tasks.core.reorient.reorient_common import CAMERA_GOAL_MARKER_POSITION, CAMERA_PLAY_NUM_ENVS
-from isaaclab_tasks.utils import PresetCfg
 
 from isaaclab_assets.robots.shadow_hand import SHADOW_FINGERTIP_BODY_NAMES
 
 
 @configclass
-class _ShadowHandCameraManagerSceneCfg(ShadowHandManagerSceneCfg):
+class ShadowHandCameraManagerSceneCfg(ShadowHandManagerSceneCfg):
     """State Manager scene augmented with camera and fingertip-wrench sensors."""
 
     num_envs = 1225
     env_spacing = 2.0
+    clone_in_fabric = True
 
     ground = None
     tiled_camera: ShadowHandTiledCameraCfg = ShadowHandTiledCameraCfg()
@@ -40,23 +40,10 @@ class _ShadowHandCameraManagerSceneCfg(ShadowHandManagerSceneCfg):
 
 
 @configclass
-class ShadowHandCameraManagerSceneCfg(PresetCfg):
-    """Backend-specific camera scene alternatives for training and benchmarking."""
+class ShadowHandCameraManagerPlaySceneCfg(ShadowHandCameraManagerSceneCfg):
+    """Reduced camera scene for checkpoint playback."""
 
-    physx = _ShadowHandCameraManagerSceneCfg(clone_in_fabric=True)
-    newton_mjwarp = _ShadowHandCameraManagerSceneCfg(clone_in_fabric=False)
-    ovphysx = physx
-    default = newton_mjwarp
-
-
-@configclass
-class ShadowHandCameraManagerPlaySceneCfg(PresetCfg):
-    """Reduced backend-specific camera scenes for checkpoint playback."""
-
-    physx = _ShadowHandCameraManagerSceneCfg(num_envs=CAMERA_PLAY_NUM_ENVS, clone_in_fabric=True)
-    newton_mjwarp = _ShadowHandCameraManagerSceneCfg(num_envs=CAMERA_PLAY_NUM_ENVS, clone_in_fabric=False)
-    ovphysx = _ShadowHandCameraManagerSceneCfg(num_envs=CAMERA_PLAY_NUM_ENVS, clone_in_fabric=True)
-    default = newton_mjwarp
+    num_envs = CAMERA_PLAY_NUM_ENVS
 
 
 @configclass
@@ -122,15 +109,15 @@ class ShadowHandCameraManagerEnvCfg(ShadowHandManagerEnvCfg):
         # camera tasks display the goal inside the tiled camera's frustum
         self.commands.object_pose.fixed_marker_pos = CAMERA_GOAL_MARKER_POSITION
         self.observations.policy.camera_features.params["feature_extractor_cfg"] = self.feature_extractor
+        # The RTX modalities need Fabric cloning, which Newton does not support, so the
+        # camera task renders out of the box on PhysX; Newton stays selectable through
+        # ``physics=newton_mjwarp`` for the state-only observation groups.
+        for backend_cfg in (self.sim.physics, self.scene.robot, self.scene.object):
+            backend_cfg.default = backend_cfg.physx
 
     def validate_config(self):
-        """Check every unresolved scene alternative or the selected camera pipeline."""
-        if isinstance(self.scene, PresetCfg):
-            scenes = (self.scene.physx, self.scene.newton_mjwarp, self.scene.ovphysx)
-        else:
-            scenes = (self.scene,)
-        for scene in scenes:
-            validate_shadow_hand_camera_settings(scene.tiled_camera, self.feature_extractor)
+        """Check the camera pipeline against the feature extractor it feeds."""
+        validate_shadow_hand_camera_settings(self.scene.tiled_camera, self.feature_extractor)
 
 
 @configclass

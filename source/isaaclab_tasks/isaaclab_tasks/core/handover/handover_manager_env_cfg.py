@@ -167,7 +167,11 @@ class RewardsCfg:
 
 @configclass
 class TerminationsCfg:
-    """Termination conditions matching the Direct single-agent adapter."""
+    """Termination conditions for the handover task.
+
+    The generic ``time_out`` term ends an episode one control step later than the Direct
+    environment, which stops at ``max_episode_length - 1``.
+    """
 
     object_out_of_reach = DoneTerm(
         func=mdp.root_height_below_minimum,

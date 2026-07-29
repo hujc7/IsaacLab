@@ -271,7 +271,7 @@ class ShadowHandCameraFeatures(ManagerTermBase):
         # at module load (config modules import mdp; see the layering note above).
         from isaaclab_tasks.core.reorient.config.shadow_hand.feature_extractor import FeatureExtractor
 
-        feature_extractor_cfg: FeatureExtractorCfg = env.cfg.feature_extractor
+        feature_extractor_cfg: FeatureExtractorCfg = cfg.params["feature_extractor_cfg"]
         self._feature_extractor = FeatureExtractor(
             feature_extractor_cfg,
             env.device,
@@ -307,8 +307,7 @@ class ShadowHandCameraFeatures(ManagerTermBase):
 
         Args:
             env: Environment containing the object and tiled camera.
-            feature_extractor_cfg: Feature-extractor configuration captured by
-                the observation term. The initialized extractor owns its copy.
+            feature_extractor_cfg: Feature-extractor configuration.
             sensor_cfg: Tiled-camera scene entity.
             object_cfg: Reoriented-object scene entity.
 
@@ -316,7 +315,7 @@ class ShadowHandCameraFeatures(ManagerTermBase):
             Predicted object position and cube keypoints [m], shape
             ``(num_envs, 27)``.
         """
-        del feature_extractor_cfg
+        del feature_extractor_cfg  # consumed in __init__
         if self._shape_probe_pending:
             embeddings = torch.zeros(env.num_envs, 27, dtype=torch.float32, device=env.device)
             env._shadow_hand_camera_embeddings = embeddings
