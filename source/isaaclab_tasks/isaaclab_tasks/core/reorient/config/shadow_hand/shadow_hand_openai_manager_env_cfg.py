@@ -40,7 +40,7 @@ from isaaclab_assets.robots.shadow_hand import SHADOW_ACTUATED_JOINT_NAMES, SHAD
 class OpenAICommandsCfg:
     """OpenAI goal command with its wider success tolerance."""
 
-    object_pose = mdp.ReorientEpisodeCommandCfg(
+    object_pose = mdp.ReorientCommandCfg(
         asset_name="object",
         init_pos_offset=IN_HAND_POS_OFFSET,
         update_goal_on_success=True,

@@ -57,7 +57,7 @@ class ShadowHandManagerSceneCfg(ReorientObjectSceneCfg):
 class CommandsCfg:
     """Object pose goal matching the Direct in-hand target."""
 
-    object_pose = mdp.ReorientEpisodeCommandCfg(
+    object_pose = mdp.ReorientCommandCfg(
         asset_name="object",
         init_pos_offset=IN_HAND_POS_OFFSET,
         update_goal_on_success=True,

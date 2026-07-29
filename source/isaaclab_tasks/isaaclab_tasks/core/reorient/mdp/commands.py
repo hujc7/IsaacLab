@@ -81,11 +81,15 @@ class ReorientCommand(CommandTerm):
         # -- metrics
         self.metrics["orientation_error"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["position_error"] = torch.zeros(self.num_envs, device=self.device)
-        self.metrics["consecutive_success"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["goals_reached"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["success_rate"] = torch.zeros(self.num_envs, device=self.device)
         # -- per-attempt success accounting: each success-driven resample completes one attempt;
         #    the trailing attempt at episode end counts as one unsuccessful attempt.
         self._completed_attempts = torch.zeros(self.num_envs, device=self.device)
+        # An auto-reset lands immediately before CommandManager.compute(); suppress success
+        # handling for those environments until one new physics step has run.
+        self._skip_success_update = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        self._fixed_marker_pos_w: torch.Tensor | None = None
         # goal-marker position with the configured offset; built lazily on first render
         self._marker_pos_w: torch.Tensor | None = None
 
@@ -125,8 +129,9 @@ class ReorientCommand(CommandTerm):
         self.metrics["position_error"][:] = torch.linalg.norm(
             self.object.data.root_pos_w.torch - self.pos_command_w, ord=2, dim=-1
         )
-        # bool flags promote to the metric's float dtype; add_ avoids the .float() temporary
-        self.metrics["consecutive_success"].add_(success_flags)
+        # Goals reached so far this episode. The Direct environment reports an exponential
+        # moving average of this same count across episodes, so the two are not interchangeable.
+        self.metrics["goals_reached"].add_(success_flags)
 
     def reset(self, env_ids: Sequence[int] | None = None) -> dict[str, float]:
         # Snapshot per-attempt success rate BEFORE the base class logs and zeros metrics.
@@ -139,6 +144,8 @@ class ReorientCommand(CommandTerm):
         # super().reset() invoked _resample_command for the new initial goal, which
         # incremented _completed_attempts; zero it back out so the new episode starts clean.
         self._completed_attempts[env_ids] = 0.0
+        reset_buf = getattr(self._env, "reset_buf", None)
+        self._skip_success_update[env_ids] = False if reset_buf is None else reset_buf[env_ids]
         # Route success_rate to the unified ``Metrics/success_rate`` path (shared TensorBoard
         # card across tasks); pop it from the returned dict so CommandManager does not
         # additionally log it under ``Metrics/<term_name>/success_rate``.
@@ -162,13 +169,12 @@ class ReorientCommand(CommandTerm):
         self._command_buf[env_ids, 3:] = self.quat_command_w[env_ids]
 
     def _update_command(self):
-        # update the command if goal is reached
         if self.cfg.update_goal_on_success:
-            # compute the goal resets
-            goal_resets = self.metrics["orientation_error"] < self.cfg.orientation_success_threshold
-            goal_reset_ids = goal_resets.nonzero(as_tuple=False).squeeze(-1)
-            # resample the goals
-            self._resample(goal_reset_ids)
+            goal_resets = (
+                self.metrics["orientation_error"] < self.cfg.orientation_success_threshold
+            ) & ~self._skip_success_update
+            self._resample(goal_resets.nonzero(as_tuple=False).squeeze(-1))
+        self._skip_success_update[:] = False
 
     def _set_debug_vis_impl(self, debug_vis: bool):
         # set visibility of markers
@@ -184,12 +190,18 @@ class ReorientCommand(CommandTerm):
                 self.goal_pose_visualizer.set_visibility(False)
 
     def _debug_vis_callback(self, event):
-        # add an offset to the marker position to visualize the goal
-        if self._marker_pos_w is None:
-            # constant per run; cached to avoid a host-to-device allocation every render frame
-            self._marker_pos_w = self.pos_command_w + torch.tensor(self.cfg.marker_pos_offset, device=self.device)
-        # visualize the goal marker
-        self.goal_pose_visualizer.visualize(translations=self._marker_pos_w, orientations=self.quat_command_w)
+        del event
+        if self.cfg.fixed_marker_pos is None:
+            marker_pos = self.pos_command_w + torch.tensor(self.cfg.marker_pos_offset, device=self.device)
+        else:
+            if self._fixed_marker_pos_w is None:
+                # constant per run; cached to avoid a host-to-device allocation every render frame
+                self._fixed_marker_pos_w = (
+                    torch.tensor(self.cfg.fixed_marker_pos, device=self.device).repeat(self.num_envs, 1)
+                    + self._env.scene.env_origins
+                )
+            marker_pos = self._fixed_marker_pos_w
+        self.goal_pose_visualizer.visualize(translations=marker_pos, orientations=self.quat_command_w)
 
 
 @configclass
@@ -221,6 +233,9 @@ class ReorientCommandCfg(CommandTermCfg):
     If True, the quaternion is made unique by ensuring the real part is positive.
     """
 
+    fixed_marker_pos: tuple[float, float, float] | None = None
+    """Fixed goal-marker position [m] in each environment, or ``None`` to follow the goal."""
+
     orientation_success_threshold: float = MISSING
     """Threshold [rad] for the orientation error to consider the goal orientation to be reached.
 
@@ -247,68 +262,3 @@ class ReorientCommandCfg(CommandTermCfg):
         },
     )
     """The configuration for the goal pose visualization marker. Defaults to a DexCube marker."""
-
-
-class ReorientEpisodeCommand(ReorientCommand):
-    """Reorientation command whose success metric is owned by an episode reward term.
-
-    This variant retains success-triggered goal resampling while suppressing the
-    generic command's per-attempt ``Metrics/success_rate`` value.
-    """
-
-    cfg: ReorientEpisodeCommandCfg
-
-    def __init__(self, cfg: ReorientEpisodeCommandCfg, env: ManagerBasedRLEnv):
-        super().__init__(cfg, env)
-        self._skip_success_update = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-        self._fixed_marker_pos_w: torch.Tensor | None = None
-
-    def _update_command(self):
-        if self.cfg.update_goal_on_success:
-            goal_reset_ids = (
-                (
-                    (self.metrics["orientation_error"] <= self.cfg.orientation_success_threshold)
-                    & ~self._skip_success_update
-                )
-                .nonzero(as_tuple=False)
-                .squeeze(-1)
-            )
-            self._resample(goal_reset_ids)
-        self._skip_success_update[:] = False
-
-    def _debug_vis_callback(self, event):
-        if self.cfg.fixed_marker_pos is None:
-            super()._debug_vis_callback(event)
-            return
-        if self._fixed_marker_pos_w is None:
-            # constant per run; cached to avoid a host-to-device allocation every render frame
-            self._fixed_marker_pos_w = (
-                torch.tensor(self.cfg.fixed_marker_pos, device=self.device).repeat(self.num_envs, 1)
-                + self._env.scene.env_origins
-            )
-        self.goal_pose_visualizer.visualize(translations=self._fixed_marker_pos_w, orientations=self.quat_command_w)
-
-    def reset(self, env_ids: Sequence[int] | None = None) -> dict[str, float]:
-        if env_ids is None:
-            env_ids = slice(None)
-        extras = CommandTerm.reset(self, env_ids)
-        self._completed_attempts[env_ids] = 0.0
-        # Auto-reset happens immediately before CommandManager.compute(). Skip
-        # success handling for those IDs until one new physics/reward step has run.
-        reset_buf = getattr(self._env, "reset_buf", None)
-        if reset_buf is None:
-            self._skip_success_update[env_ids] = False
-        else:
-            self._skip_success_update[env_ids] = reset_buf[env_ids]
-        extras.pop("success_rate", None)
-        return extras
-
-
-@configclass
-class ReorientEpisodeCommandCfg(ReorientCommandCfg):
-    """Configuration for episode-accounted reorientation commands."""
-
-    class_type: type[ReorientEpisodeCommand] = ReorientEpisodeCommand
-
-    fixed_marker_pos: tuple[float, float, float] | None = None
-    """Fixed goal-marker position [m] in each environment, or ``None`` to use the command position."""

@@ -8,8 +8,8 @@ __all__ = [
     "NoisyEMAJointPositionToLimitsActionCfg",
     "ReorientCommand",
     "ReorientCommandCfg",
-    "ReorientEpisodeCommand",
-    "ReorientEpisodeCommandCfg",
+    "ReorientCommand",
+    "ReorientCommandCfg",
     "reset_reorient_state",
     "fingertip_pos",
     "fingertip_quat",
@@ -32,7 +32,7 @@ __all__ = [
     "reorient_timeout",
 ]
 
-from .commands import ReorientCommand, ReorientCommandCfg, ReorientEpisodeCommand, ReorientEpisodeCommandCfg
+from .commands import ReorientCommand, ReorientCommandCfg
 from .events import reset_reorient_state
 from .noisy_actions import NoisyEMAJointPositionToLimitsAction
 from .actions import NoisyEMAJointPositionToLimitsActionCfg
