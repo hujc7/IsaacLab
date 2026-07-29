@@ -17,6 +17,9 @@ from .object_library_cfg import SimReadyObjectFilterCfg, SimReadyObjectLibraryCf
 
 logger = logging.getLogger(__name__)
 
+_AUDIT_PROGRESS_INTERVAL = 25
+"""How often to report progress while auditing, in candidates."""
+
 _MAX_INSTANCING_DEPTH = 8
 """Upper bound on how deeply catalogue assets nest instanced prims, used to bound de-instancing."""
 
@@ -263,13 +266,17 @@ class SimReadyObjectLibrary:
 
         kept: list[ObjectSpec] = []
         dropped: dict[str, int] = {}
-        for url in candidates:
+        for index, url in enumerate(candidates):
             spec = self.audit(url)
             reason = _rejection_reason(spec, object_filter)
             if reason is None:
                 kept.append(spec)
             else:
                 dropped[reason] = dropped.get(reason, 0) + 1
+            # this is the one slow stage -- on a cold cache each asset is a fetch and a stage open,
+            # so report progress rather than leaving minutes of silence
+            if (index + 1) % _AUDIT_PROGRESS_INTERVAL == 0:
+                logger.info("Audited %d/%d candidates, kept %d.", index + 1, len(candidates), len(kept))
         self.save_cache()
 
         if object_filter.distinct_families:
