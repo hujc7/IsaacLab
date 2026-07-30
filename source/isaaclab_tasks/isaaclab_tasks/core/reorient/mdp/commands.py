@@ -81,7 +81,7 @@ class ReorientCommand(CommandTerm):
         # -- metrics
         self.metrics["orientation_error"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["position_error"] = torch.zeros(self.num_envs, device=self.device)
-        self.metrics["goals_reached"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["consecutive_success"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["success_rate"] = torch.zeros(self.num_envs, device=self.device)
         # An auto-reset lands immediately before CommandManager.compute(); suppress success
         # handling for those environments until one new physics step has run.
@@ -128,14 +128,14 @@ class ReorientCommand(CommandTerm):
         )
         # Goals reached so far this episode. The Direct environment reports an exponential
         # moving average of this same count across episodes, so the two are not interchangeable.
-        self.metrics["goals_reached"].add_(success_flags)
+        self.metrics["consecutive_success"].add_(success_flags)
 
     def reset(self, env_ids: Sequence[int] | None = None) -> dict[str, float]:
         # Snapshot the episode outcome BEFORE the base class logs and zeros the metrics.
         if env_ids is None:
             env_ids = slice(None)
         self.metrics["success_rate"][env_ids] = (
-            self.metrics["goals_reached"][env_ids] >= self.cfg.success_count_threshold
+            self.metrics["consecutive_success"][env_ids] >= self.cfg.success_count_threshold
         ).float()
         extras = super().reset(env_ids)
         reset_buf = getattr(self._env, "reset_buf", None)

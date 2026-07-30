@@ -32,7 +32,7 @@ def max_consecutive_success(env: ManagerBasedRLEnv, num_success: int, command_na
     """
     command_term: ReorientCommand = env.command_manager.get_term(command_name)
 
-    return command_term.metrics["goals_reached"] >= num_success
+    return command_term.metrics["consecutive_success"] >= num_success
 
 
 def object_away_from_goal(
