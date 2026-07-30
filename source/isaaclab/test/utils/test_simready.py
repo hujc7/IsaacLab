@@ -33,6 +33,7 @@ def make_spec(url: str, mass: float | None = 0.2, dims: tuple[float, float, floa
         mass=mass,
         dims=dims,
         validation_passed=kwargs.get("validation_passed", True),
+        collision_approximations=kwargs.get("collision_approximations", ("sdf",)),
     )
 
 
@@ -75,6 +76,8 @@ class TestRejectionReason:
             ({"dims": (0.1, 0.1, 1e-3)}, "too thin for stable contact"),
             ({"body_path": None}, "no rigid body"),
             ({"validation_passed": False}, "newest-dated validation verdict is a failure"),
+            ({"collision_approximations": ("none",)}, "declares no approximation"),
+            ({"collision_approximations": ("sdf", "none")}, "declares no approximation"),
         ],
     )
     def test_unusable_asset_is_rejected_with_a_reason(self, spec_kwargs, expected):
@@ -88,6 +91,11 @@ class TestRejectionReason:
         """Leaving a field unset must not filter on it, however extreme the value."""
         unconstrained = SimReadyObjectFilterCfg()
         assert _rejection_reason(make_spec("a/Anvil/a.usd", mass=500.0, dims=(2.0, 2.0, 2.0)), unconstrained) is None
+
+    def test_an_undeclared_collider_is_kept_when_the_check_is_disabled(self):
+        """The hull is usable; a task may prefer more objects over exact collision shape."""
+        relaxed = make_filter(require_declared_collision=False)
+        assert _rejection_reason(make_spec("a/Cup/a.usd", collision_approximations=("none",)), relaxed) is None
 
     def test_widening_the_mass_range_accepts_a_heavier_asset(self):
         """The bound describes the gripper, so a stronger one keeps more objects."""

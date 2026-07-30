@@ -72,6 +72,21 @@ class SimReadyObjectFilterCfg:
     task objects and are a large share of the catalogue: 61 of 210 candidates in one table-top sweep.
     """
 
+    require_declared_collision: bool = True
+    """Whether every collider must declare how it is approximated.
+
+    A mesh collider that applies no ``UsdPhysicsMeshCollisionAPI`` still collides, but USD defaults
+    its approximation to ``none`` -- a raw triangle mesh, legal for static geometry only -- so a
+    simulator asked to move the body substitutes a convex hull. A cup then loses its interior and a
+    mug its handle gap, silently: the asset passes validation, the run succeeds, and only a log line
+    records the substitution.
+
+    The catalogue is well authored here, so this is cheap: of 211 candidates, 199 declare an
+    approximation (almost all ``sdf``) and 12 declare none. None declares an unusable one.
+
+    Set to ``False`` to keep those assets and accept the convex hull.
+    """
+
     max_per_product_family: int | None = None
     """How many variants of one product to keep, or ``None`` to keep them all.
 

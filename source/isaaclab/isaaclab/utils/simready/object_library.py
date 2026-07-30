@@ -45,6 +45,14 @@ class ObjectSpec:
     validation_passed: bool
     """Whether the newest-dated verdict for every required feature is a pass."""
 
+    collision_approximations: tuple[str, ...] = ()
+    """How each collider under the body is approximated, as physics will actually treat it.
+
+    A mesh collider that applies no ``UsdPhysicsMeshCollisionAPI`` records ``"none"``, since that is
+    the value USD defaults to and therefore what the simulator sees -- not ``None``, which would
+    read as "unknown".
+    """
+
     @property
     def max_dim(self) -> float:
         """Largest bounding-box extent [m]."""
@@ -408,13 +416,17 @@ class SimReadyObjectLibrary:
 
         body_path = None
         authored_masses: list[tuple[str, float]] = []
+        approximations: list[str] = []
         for prim in Usd.PrimRange.Stage(stage, Usd.TraverseInstanceProxies()):
             path = str(prim.GetPath())
-            if body_path is None and "PhysicsRigidBodyAPI" in [str(schema) for schema in prim.GetAppliedSchemas()]:
+            schemas = [str(schema) for schema in prim.GetAppliedSchemas()]
+            if body_path is None and "PhysicsRigidBodyAPI" in schemas:
                 body_path = path
             attribute = prim.GetAttribute("physics:mass")
             if attribute and attribute.IsValid() and attribute.Get():
                 authored_masses.append((path, float(attribute.Get())))
+            if "PhysicsCollisionAPI" in schemas:
+                approximations.append(_collision_approximation(prim, schemas))
         mass = _body_mass(body_path, authored_masses)
         size = (
             UsdGeom.BBoxCache(Usd.TimeCode.Default(), ["default", "render", "proxy"])
@@ -428,6 +440,7 @@ class SimReadyObjectLibrary:
             mass,
             (size[0], size[1], size[2]),
             _latest_validation_passed(stage, self.cfg.object_filter.validated_features),
+            tuple(sorted(set(approximations))),
         )
 
 
@@ -436,6 +449,20 @@ def _search_filter(name: str, *args, **kwargs):
     import simready.search  # noqa: PLC0415
 
     return getattr(simready.search, f"SearchFilter{name}")(*args, **kwargs)
+
+
+def _collision_approximation(prim, schemas: list[str]) -> str:
+    """Return how physics will approximate one collider, whatever the asset left unsaid.
+
+    ``physics:approximation`` lives on ``UsdPhysicsMeshCollisionAPI``. A mesh collider that never
+    applies that schema still collides, but USD defaults the approximation to ``none`` -- a raw
+    triangle mesh, which is legal for static geometry only. A simulator asked to move such a body
+    substitutes a convex hull, so a concave shape quietly becomes its shrink-wrap.
+    """
+    if "PhysicsMeshCollisionAPI" not in schemas:
+        return "none"
+    attribute = prim.GetAttribute("physics:approximation")
+    return str(attribute.Get()) if attribute and attribute.IsValid() and attribute.Get() else "none"
 
 
 def _body_mass(body_path: str | None, authored: list[tuple[str, float]]) -> float | None:
@@ -492,6 +519,8 @@ def _rejection_reason(spec: ObjectSpec | None, cfg: SimReadyObjectFilterCfg) -> 
         return "could not be opened"
     if cfg.require_rigid_body and spec.body_path is None:
         return "no rigid body: collision geometry but nothing physics can move"
+    if cfg.require_declared_collision and "none" in spec.collision_approximations:
+        return "a collider declares no approximation, so its mesh would be replaced by a convex hull"
     if not spec.validation_passed:
         return "newest-dated validation verdict is a failure"
     if cfg.size_range is not None:
