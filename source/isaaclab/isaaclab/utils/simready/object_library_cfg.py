@@ -72,6 +72,18 @@ class SimReadyObjectFilterCfg:
     task objects and are a large share of the catalogue: 61 of 210 candidates in one table-top sweep.
     """
 
+    max_per_product_family: int | None = None
+    """How many variants of one product to keep, or ``None`` to keep them all.
+
+    The catalogue ships near-identical variants (``Golf_Ball``, ``Golf_Ball_A01`` through ``A04``),
+    so a set of unique files can still look like one object repeated. Capping is worth it when the
+    objects are seen together -- a demo grid, a recorded video -- and costs object count when they
+    are not: one table-top sweep yields 99 assets uncapped and 39 at a cap of one.
+
+    Families are identified by stripping trailing variant codes from the asset name, which is a
+    naming convention rather than a published property.
+    """
+
 
 @configclass
 class SimReadyObjectLibraryCfg:

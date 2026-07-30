@@ -11,6 +11,7 @@ import concurrent.futures
 import json
 import logging
 import os
+import re
 import threading
 from dataclasses import asdict, dataclass, fields
 
@@ -53,6 +54,18 @@ class ObjectSpec:
     def min_dim(self) -> float:
         """Smallest bounding-box extent [m]."""
         return min(self.dims)
+
+    @property
+    def family(self) -> str:
+        """Product family, with the variant code stripped.
+
+        ``Golf_Ball_A03`` and ``Golf_Ball`` are the same family, as are ``Boxed_Drink_A01`` and
+        ``Boxed_Drink_E01``.
+        """
+        directory = self.url.rsplit("/", 2)[-2]
+        directory = re.sub(r"_[A-Z]?\d+$", "", directory)
+        directory = re.sub(r"_[A-Z]\d+$", "", directory)
+        return directory.lower().replace("_", "")
 
 
 class SimReadyObjectLibrary:
@@ -270,13 +283,20 @@ class SimReadyObjectLibrary:
                     logger.info("Audited %d/%d candidates, kept %d.", index + 1, len(candidates), len(kept))
         self.save_cache()
 
+        if object_filter.max_per_product_family is not None:
+            per_family: dict[str, list[ObjectSpec]] = {}
+            for spec in sorted(kept, key=lambda s: s.url):
+                per_family.setdefault(spec.family, []).append(spec)
+            kept = [s for variants in per_family.values() for s in variants[: object_filter.max_per_product_family]]
+            logger.info("Kept %d assets across %d product families.", len(kept), len(per_family))
+
         selected = sorted(kept, key=lambda spec: (spec.mass is None, spec.mass))[: self.cfg.num_objects]
 
         logger.info("Selected %d of %d usable objects from %d candidates.", len(selected), len(kept), len(candidates))
         if len(selected) < self.cfg.num_objects:
             logger.warning(
-                "Asked for %d objects but only %d satisfy the filter."
-                " Widen size_range or mass_range, or add search phrases, to find more.",
+                "Asked for %d objects but only %d satisfy the filter. Widen size_range or"
+                " mass_range, add search phrases, or raise max_per_product_family to find more.",
                 self.cfg.num_objects,
                 len(selected),
             )
