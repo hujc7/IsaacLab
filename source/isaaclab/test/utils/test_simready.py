@@ -22,7 +22,7 @@ from isaaclab.utils.simready import (
     SimReadyObjectLibrary,
     SimReadyObjectLibraryCfg,
 )
-from isaaclab.utils.simready.object_library import _rejection_reason
+from isaaclab.utils.simready.object_library import _body_mass, _rejection_reason
 
 
 def make_spec(url: str, mass: float | None = 0.2, dims: tuple[float, float, float] = (0.07, 0.07, 0.07), **kwargs):
@@ -93,6 +93,36 @@ class TestRejectionReason:
         """The bound describes the gripper, so a stronger one keeps more objects."""
         assert _rejection_reason(make_spec("a/Can/a.usd", mass=5.0), make_filter()) is not None
         assert _rejection_reason(make_spec("a/Can/a.usd", mass=5.0), make_filter(mass_range=(0.005, 6.0))) is None
+
+
+class TestBodyMass:
+    """Mass composes down the prim tree, so it is aggregated rather than read from one attribute."""
+
+    BODY = "/RootNode/Geometry/obj_00"
+
+    def test_mass_on_the_body_is_used_as_is(self):
+        assert _body_mass(self.BODY, [(self.BODY, 0.42)]) == pytest.approx(0.42)
+
+    def test_masses_on_descendants_are_summed(self):
+        """A coffee cup declares its body and lid separately; the object weighs both."""
+        authored = [(f"{self.BODY}/body_mesh", 0.0273), (f"{self.BODY}/lid_mesh", 0.0398)]
+        assert _body_mass(self.BODY, authored) == pytest.approx(0.0671)
+
+    def test_a_value_on_the_body_wins_over_its_descendants(self):
+        """Assets that state the same mass on body and mesh must not be counted twice."""
+        authored = [(self.BODY, 0.1165), (f"{self.BODY}/body_mesh", 0.1165)]
+        assert _body_mass(self.BODY, authored) == pytest.approx(0.1165)
+
+    def test_masses_outside_the_body_are_ignored(self):
+        authored = [(f"{self.BODY}/mesh", 0.5), ("/RootNode/Other/mesh", 9.0)]
+        assert _body_mass(self.BODY, authored) == pytest.approx(0.5)
+
+    def test_no_authored_mass_is_reported_as_unknown(self):
+        assert _body_mass(self.BODY, []) is None
+        assert _body_mass(self.BODY, [("/RootNode/Elsewhere", 1.0)]) is None
+
+    def test_mass_without_a_body_still_reports_a_total(self):
+        assert _body_mass(None, [("/a", 0.2), ("/b", 0.3)]) == pytest.approx(0.5)
 
 
 class TestObjectSpec:

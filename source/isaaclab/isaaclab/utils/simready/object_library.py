@@ -406,13 +406,16 @@ class SimReadyObjectLibrary:
         if stage is None or stage.GetDefaultPrim() is None:
             return None
 
-        body_path = mass = None
+        body_path = None
+        authored_masses: list[tuple[str, float]] = []
         for prim in Usd.PrimRange.Stage(stage, Usd.TraverseInstanceProxies()):
-            if "PhysicsRigidBodyAPI" in [str(schema) for schema in prim.GetAppliedSchemas()]:
-                body_path = str(prim.GetPath())
+            path = str(prim.GetPath())
+            if body_path is None and "PhysicsRigidBodyAPI" in [str(schema) for schema in prim.GetAppliedSchemas()]:
+                body_path = path
             attribute = prim.GetAttribute("physics:mass")
             if attribute and attribute.IsValid() and attribute.Get():
-                mass = float(attribute.Get())
+                authored_masses.append((path, float(attribute.Get())))
+        mass = _body_mass(body_path, authored_masses)
         size = (
             UsdGeom.BBoxCache(Usd.TimeCode.Default(), ["default", "render", "proxy"])
             .ComputeWorldBound(stage.GetDefaultPrim())
@@ -433,6 +436,35 @@ def _search_filter(name: str, *args, **kwargs):
     import simready.search  # noqa: PLC0415
 
     return getattr(simready.search, f"SearchFilter{name}")(*args, **kwargs)
+
+
+def _body_mass(body_path: str | None, authored: list[tuple[str, float]]) -> float | None:
+    """Return the mass physics will give the body, from every authored ``physics:mass``.
+
+    ``UsdPhysicsMassAPI`` may be applied to the rigid body itself or to the collision prims beneath
+    it, and the two are not alternatives: a value on the body is the body's mass, while values on
+    descendants are contributions that sum. Catalogue assets use the second form -- a coffee cup
+    declares its body and its lid separately, which is what places the centre of mass correctly --
+    so reading a single attribute returns a fragment of the real mass.
+
+    Args:
+        body_path: Prim path of the rigid body, or ``None`` when the asset has none.
+        authored: Every ``(prim path, physics:mass)`` found on the stage.
+
+    Returns:
+        The body's mass [kg], or ``None`` when nothing relevant was authored.
+    """
+    if not authored:
+        return None
+    if body_path is None:
+        # no body to attribute the mass to; report what was authored so the filter can still judge
+        return sum(value for _, value in authored)
+    on_body = [value for path, value in authored if path == body_path]
+    if on_body:
+        # a value on the body is authoritative -- descendants below it are then redundant detail
+        return on_body[0]
+    contributions = [value for path, value in authored if path.startswith(body_path + "/")]
+    return sum(contributions) if contributions else None
 
 
 def _latest_validation_passed(stage, features: tuple[str, ...]) -> bool:
