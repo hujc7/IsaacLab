@@ -7,12 +7,16 @@
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
+from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sim.simulation_cfg import SimulationCfg
+from isaaclab.sim.spawners.materials import RigidBodyMaterialBaseCfg
 from isaaclab.utils.configclass import configclass
 
 import isaaclab_tasks.core.reorient.mdp as mdp
@@ -25,11 +29,7 @@ from isaaclab_tasks.core.reorient.config.shadow_hand.shadow_hand_common import (
     PhysicsCfg,
     PhysxEventCfg,
 )
-from isaaclab_tasks.core.reorient.reorient_common import GOAL_MARKER_POSITION, IN_HAND_POS_OFFSET
-from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import ReorientObjectEnvCfg, ReorientObjectSceneCfg
-from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import RewardsCfg as ReorientRewardsCfg
-from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import TerminationsCfg as ReorientTerminationsCfg
-from isaaclab_tasks.utils import PresetCfg
+from isaaclab_tasks.utils import PresetCfg, preset
 
 from isaaclab_assets.robots.shadow_hand import SHADOW_ACTUATED_JOINT_NAMES, SHADOW_FINGERTIP_BODY_NAMES
 
@@ -37,8 +37,12 @@ from isaaclab_assets.robots.shadow_hand import SHADOW_ACTUATED_JOINT_NAMES, SHAD
 
 
 @configclass
-class ShadowHandManagerSceneCfg(ReorientObjectSceneCfg):
+class ShadowHandManagerSceneCfg(InteractiveSceneCfg):
     """Shared reorientation scene with the Shadow hand and a ground plane."""
+
+    # ``clone_in_fabric`` is the only backend-varying field: PhysX/OvPhysX use Fabric
+    # cloning for speed, Newton does not support it.
+    clone_in_fabric = preset(default=False, physx=True, ovphysx=True, newton_mjwarp=False)
 
     num_envs = 8192
     env_spacing = 0.75
@@ -59,11 +63,11 @@ class CommandsCfg:
 
     object_pose = mdp.ReorientCommandCfg(
         asset_name="object",
-        init_pos_offset=IN_HAND_POS_OFFSET,
+        init_pos_offset=(0.0, 0.0, -0.04),
         update_goal_on_success=True,
         orientation_success_threshold=0.1,
         make_quat_unique=False,
-        fixed_marker_pos=GOAL_MARKER_POSITION,
+        fixed_marker_pos=(-0.2, -0.45, 0.68),
         goal_pose_visualizer_cfg=GOAL_OBJECT_CFG,
         debug_vis=True,
     )
@@ -178,9 +182,19 @@ class EventCfg(PresetCfg):
 
 
 @configclass
-class RewardsCfg(ReorientRewardsCfg):
+class RewardsCfg:
     """Shared reward terms tuned to the Direct task's scales."""
 
+    track_orientation_inv_l2 = RewTerm(
+        func=mdp.track_orientation_inv_l2,
+        weight=1.0,
+        params={"object_cfg": SceneEntityCfg("object"), "rot_eps": 0.1, "command_name": "object_pose"},
+    )
+    success_bonus = RewTerm(
+        func=mdp.success_bonus,
+        weight=250.0,
+        params={"object_cfg": SceneEntityCfg("object"), "command_name": "object_pose"},
+    )
     track_pos_l2 = RewTerm(
         func=mdp.track_pos_l2,
         weight=-10.0,
@@ -192,9 +206,10 @@ class RewardsCfg(ReorientRewardsCfg):
 
 
 @configclass
-class TerminationsCfg(ReorientTerminationsCfg):
+class TerminationsCfg:
     """Shared terminations reduced to the Direct task's fall condition."""
 
+    time_out = DoneTerm(func=mdp.time_out, time_out=True)
     object_out_of_reach = DoneTerm(
         func=mdp.object_away_from_goal,
         params={
@@ -207,10 +222,18 @@ class TerminationsCfg(ReorientTerminationsCfg):
 
 
 @configclass
-class ShadowHandManagerEnvCfg(ReorientObjectEnvCfg):
+class ShadowHandManagerEnvCfg(ManagerBasedRLEnvCfg):
     """Manager-based state Shadow Hand task with Direct-compatible semantics."""
 
     scene: ShadowHandManagerSceneCfg = ShadowHandManagerSceneCfg()
+    decimation = 2
+    episode_length_s = 10.0
+    sim: SimulationCfg = SimulationCfg(
+        dt=1 / 120,
+        render_interval=decimation,
+        physics_material=RigidBodyMaterialBaseCfg(static_friction=1.0, dynamic_friction=1.0),
+        physics=PhysicsCfg(),
+    )
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
     commands: CommandsCfg = CommandsCfg()
@@ -218,10 +241,4 @@ class ShadowHandManagerEnvCfg(ReorientObjectEnvCfg):
     terminations: TerminationsCfg = TerminationsCfg()
     events: EventCfg = EventCfg()
 
-    def __post_init__(self):
-        super().__post_init__()
-        # mirrors the Direct cfg
-        self.decimation = 2
-        self.episode_length_s = 10.0
-        self.sim.render_interval = self.decimation
-        self.sim.physics = PhysicsCfg()
+    viewer: ViewerCfg = ViewerCfg(eye=(2.0, 2.0, 2.0))

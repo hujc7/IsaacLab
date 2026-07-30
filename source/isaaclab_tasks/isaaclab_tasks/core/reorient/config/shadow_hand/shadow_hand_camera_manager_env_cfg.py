@@ -21,7 +21,6 @@ from isaaclab_tasks.core.reorient.config.shadow_hand.shadow_hand_manager_env_cfg
     ShadowHandManagerEnvCfg,
     ShadowHandManagerSceneCfg,
 )
-from isaaclab_tasks.core.reorient.reorient_common import CAMERA_GOAL_MARKER_POSITION, CAMERA_PLAY_NUM_ENVS
 
 from isaaclab_assets.robots.shadow_hand import SHADOW_FINGERTIP_BODY_NAMES
 
@@ -37,13 +36,6 @@ class ShadowHandCameraManagerSceneCfg(ShadowHandManagerSceneCfg):
     ground = None
     tiled_camera: ShadowHandTiledCameraCfg = ShadowHandTiledCameraCfg()
     joint_wrench = JointWrenchSensorCfg(prim_path="{ENV_REGEX_NS}/Robot")
-
-
-@configclass
-class ShadowHandCameraManagerPlaySceneCfg(ShadowHandCameraManagerSceneCfg):
-    """Reduced camera scene for checkpoint playback."""
-
-    num_envs = CAMERA_PLAY_NUM_ENVS
 
 
 @configclass
@@ -107,7 +99,8 @@ class ShadowHandCameraManagerEnvCfg(ShadowHandManagerEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         # camera tasks display the goal inside the tiled camera's frustum
-        self.commands.object_pose.fixed_marker_pos = CAMERA_GOAL_MARKER_POSITION
+        # goal cube must sit inside the tiled camera's frustum
+        self.commands.object_pose.fixed_marker_pos = (-0.2, 0.1, 0.6)
         self.observations.policy.camera_features.params["feature_extractor_cfg"] = self.feature_extractor
         # The RTX modalities need Fabric cloning, which Newton does not support, so the
         # camera task renders out of the box on PhysX; Newton stays selectable through
@@ -119,10 +112,11 @@ class ShadowHandCameraManagerEnvCfg(ShadowHandManagerEnvCfg):
         """Check the camera pipeline against the feature extractor it feeds."""
         validate_shadow_hand_camera_settings(self.scene.tiled_camera, self.feature_extractor)
 
-
-@configclass
-class ShadowHandCameraManagerPlayEnvCfg(ShadowHandCameraManagerEnvCfg):
-    """Manager camera task configured for checkpoint playback."""
-
-    scene: ShadowHandCameraManagerPlaySceneCfg = ShadowHandCameraManagerPlaySceneCfg()
-    feature_extractor: FeatureExtractorCfg = FeatureExtractorCfg(train=False, load_checkpoint=True)
+    def play_mode(self):
+        super().play_mode()
+        # the tiled camera needs more environments than the shared play default
+        self.scene.num_envs = 64
+        # mutate rather than replace: subclasses may have disabled the CNN
+        self.feature_extractor.train = False
+        self.feature_extractor.load_checkpoint = True
+        self.observations.policy.camera_features.params["feature_extractor_cfg"] = self.feature_extractor

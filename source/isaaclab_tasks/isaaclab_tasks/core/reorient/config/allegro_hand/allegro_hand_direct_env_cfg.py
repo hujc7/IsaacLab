@@ -13,7 +13,6 @@ from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.core.reorient.config.allegro_hand.allegro_hand_common import (
     ALLEGRO_HAND_ROBOT_CFG,
-    CUBE_CFG,
     GOAL_OBJECT_CFG,
     CubeCfg,
     PhysicsCfg,
@@ -47,7 +46,7 @@ class AllegroHandEnvCfg(DirectRLEnvCfg):
     fingertip_body_names = ALLEGRO_FINGERTIP_BODY_NAMES
 
     # in-hand object
-    object_cfg: CubeCfg = CUBE_CFG
+    object_cfg: CubeCfg = CubeCfg()
     # goal object
     goal_object_cfg: VisualizationMarkersCfg = GOAL_OBJECT_CFG
     # scene
@@ -74,6 +73,10 @@ class AllegroHandEnvCfg(DirectRLEnvCfg):
     max_consecutive_success = 0
     success_count_threshold: int = 1
     """Minimum number of goals reached in an episode to count it as a successful episode."""
+    in_hand_pos_offset: tuple[float, float, float] = (0.0, 0.0, -0.04)
+    """In-hand goal anchor, relative to the object's default position [m]."""
+    goal_marker_position: tuple[float, float, float] = (-0.2, -0.45, 0.68)
+    """Fixed goal-marker display position [m], environment frame."""
     av_factor = 0.1
     act_moving_average = 1.0
     force_torque_obs_scale = 10.0

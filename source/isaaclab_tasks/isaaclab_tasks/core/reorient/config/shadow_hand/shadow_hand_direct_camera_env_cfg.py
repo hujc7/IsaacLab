@@ -12,7 +12,6 @@ from isaaclab.utils.configclass import configclass
 
 from isaaclab_tasks.core.reorient.config.shadow_hand.feature_extractor import FeatureExtractorCfg
 from isaaclab_tasks.core.reorient.config.shadow_hand.shadow_hand_direct_env_cfg import ShadowHandEnvCfg
-from isaaclab_tasks.core.reorient.reorient_common import CAMERA_PLAY_NUM_ENVS
 from isaaclab_tasks.utils import PresetCfg
 from isaaclab_tasks.utils.presets import MultiBackendRendererCfg
 
@@ -166,15 +165,13 @@ class ShadowHandCameraEnvCfg(ShadowHandEnvCfg):
         """Check renderer/data-type and feature-extractor compatibility."""
         validate_shadow_hand_camera_settings(self.tiled_camera, self.feature_extractor)
 
-
-@configclass
-class ShadowHandCameraEnvPlayCfg(ShadowHandCameraEnvCfg):
-    # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(
-        num_envs=CAMERA_PLAY_NUM_ENVS, env_spacing=2.0, replicate_physics=True
-    )
-    # inference for CNN
-    feature_extractor: FeatureExtractorCfg = FeatureExtractorCfg(train=False, load_checkpoint=True)
+    def play_mode(self):
+        super().play_mode()
+        # the tiled camera needs more environments than the shared play default
+        self.scene.num_envs = 64
+        # mutate rather than replace: subclasses may have disabled the CNN
+        self.feature_extractor.train = False
+        self.feature_extractor.load_checkpoint = True
 
 
 @configclass

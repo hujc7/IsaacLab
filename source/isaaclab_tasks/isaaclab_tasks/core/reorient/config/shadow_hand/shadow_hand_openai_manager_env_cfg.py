@@ -5,6 +5,7 @@
 
 """Manager-based counterpart of the OpenAI Shadow Hand reorientation variants (FF and LSTM)."""
 
+from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
@@ -12,6 +13,8 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.sensors import JointWrenchSensorCfg
+from isaaclab.sim.simulation_cfg import SimulationCfg
+from isaaclab.sim.spawners.materials import RigidBodyMaterialBaseCfg
 from isaaclab.utils.configclass import configclass
 
 import isaaclab_tasks.core.reorient.mdp as mdp
@@ -27,10 +30,6 @@ from isaaclab_tasks.core.reorient.config.shadow_hand.shadow_hand_manager_env_cfg
     FullStateWithoutActionCfg,
     ShadowHandManagerSceneCfg,
 )
-from isaaclab_tasks.core.reorient.reorient_common import GOAL_MARKER_POSITION, IN_HAND_POS_OFFSET
-from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import ReorientObjectEnvCfg
-from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import RewardsCfg as ReorientRewardsCfg
-from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import TerminationsCfg as ReorientTerminationsCfg
 from isaaclab_tasks.utils import PresetCfg
 
 from isaaclab_assets.robots.shadow_hand import SHADOW_ACTUATED_JOINT_NAMES, SHADOW_FINGERTIP_BODY_NAMES
@@ -42,11 +41,11 @@ class OpenAICommandsCfg:
 
     object_pose = mdp.ReorientCommandCfg(
         asset_name="object",
-        init_pos_offset=IN_HAND_POS_OFFSET,
+        init_pos_offset=(0.0, 0.0, -0.04),
         update_goal_on_success=True,
         orientation_success_threshold=0.4,
         make_quat_unique=False,
-        fixed_marker_pos=GOAL_MARKER_POSITION,
+        fixed_marker_pos=(-0.2, -0.45, 0.68),
         goal_pose_visualizer_cfg=GOAL_OBJECT_CFG,
         debug_vis=True,
     )
@@ -146,9 +145,19 @@ class OpenAIEventCfg(PresetCfg):
 
 
 @configclass
-class OpenAIRewardsCfg(ReorientRewardsCfg):
+class OpenAIRewardsCfg:
     """Shared reward terms tuned to the Direct OpenAI variant's scales."""
 
+    track_orientation_inv_l2 = RewTerm(
+        func=mdp.track_orientation_inv_l2,
+        weight=1.0,
+        params={"object_cfg": SceneEntityCfg("object"), "rot_eps": 0.1, "command_name": "object_pose"},
+    )
+    success_bonus = RewTerm(
+        func=mdp.success_bonus,
+        weight=250.0,
+        params={"object_cfg": SceneEntityCfg("object"), "command_name": "object_pose"},
+    )
     track_pos_l2 = RewTerm(
         func=mdp.track_pos_l2,
         weight=-10.0,
@@ -165,7 +174,7 @@ class OpenAIRewardsCfg(ReorientRewardsCfg):
 
 
 @configclass
-class OpenAITerminationsCfg(ReorientTerminationsCfg):
+class OpenAITerminationsCfg:
     """Shared terminations with the OpenAI streak cap and success-extended timer.
 
     The Direct variant reports both the streak cap and the elapsed-time limit as
@@ -197,7 +206,7 @@ class OpenAITerminationsCfg(ReorientTerminationsCfg):
 
 
 @configclass
-class ShadowHandOpenAIManagerEnvCfg(ReorientObjectEnvCfg):
+class ShadowHandOpenAIManagerEnvCfg(ManagerBasedRLEnvCfg):
     """Manager counterpart shared by the OpenAI FF and LSTM variants.
 
     Standalone rather than a subclass of :class:`ShadowHandManagerEnvCfg`:
@@ -206,6 +215,14 @@ class ShadowHandOpenAIManagerEnvCfg(ReorientObjectEnvCfg):
     """
 
     scene: ShadowHandOpenAIManagerSceneCfg = ShadowHandOpenAIManagerSceneCfg()
+    decimation = 3
+    episode_length_s = 8.0
+    sim: SimulationCfg = SimulationCfg(
+        dt=1 / 60,
+        render_interval=decimation,
+        physics_material=RigidBodyMaterialBaseCfg(static_friction=1.0, dynamic_friction=1.0),
+        physics=PhysicsCfg(),
+    )
     observations: OpenAIObservationsCfg = OpenAIObservationsCfg()
     actions: OpenAIActionsCfg = OpenAIActionsCfg()
     commands: OpenAICommandsCfg = OpenAICommandsCfg()
@@ -213,12 +230,4 @@ class ShadowHandOpenAIManagerEnvCfg(ReorientObjectEnvCfg):
     terminations: OpenAITerminationsCfg = OpenAITerminationsCfg()
     events: OpenAIEventCfg = OpenAIEventCfg()
 
-    def __post_init__(self):
-        super().__post_init__()
-        # mirrors the Direct cfg
-        self.decimation = 3
-        self.episode_length_s = 8.0
-        self.sim.dt = 1 / 60
-        self.sim.render_interval = self.decimation
-        self.sim.physics = PhysicsCfg()
-        self.viewer.eye = (2.0, 2.0, 2.0)
+    viewer: ViewerCfg = ViewerCfg(eye=(2.0, 2.0, 2.0))

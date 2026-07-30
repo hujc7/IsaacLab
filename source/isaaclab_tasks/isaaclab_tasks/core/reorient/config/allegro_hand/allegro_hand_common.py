@@ -23,6 +23,8 @@ from isaaclab_tasks.utils import PresetCfg
 
 from isaaclab_assets.robots.allegro import ALLEGRO_HAND_CFG
 
+ALLEGRO_HAND_ROBOT_CFG = ALLEGRO_HAND_CFG.replace(prim_path="/World/envs/env_.*/Robot")
+
 
 @configclass
 class CubeCfg(PresetCfg):
@@ -100,9 +102,6 @@ class PhysicsCfg(PresetCfg):
     default = newton_mjwarp
 
 
-# Scene pieces shared verbatim by the manager-based variant.
-ALLEGRO_HAND_ROBOT_CFG = ALLEGRO_HAND_CFG.replace(prim_path="/World/envs/env_.*/Robot")
-CUBE_CFG = CubeCfg()
 GOAL_OBJECT_CFG = VisualizationMarkersCfg(
     prim_path="/Visuals/goal_marker",
     markers={

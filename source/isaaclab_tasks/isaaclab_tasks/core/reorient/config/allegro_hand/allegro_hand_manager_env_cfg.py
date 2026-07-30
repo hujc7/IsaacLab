@@ -7,40 +7,43 @@
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
+from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
+from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sim.simulation_cfg import SimulationCfg
+from isaaclab.sim.spawners.materials import RigidBodyMaterialBaseCfg
 from isaaclab.utils.configclass import configclass
 
 import isaaclab_tasks.core.reorient.mdp as mdp
 from isaaclab_tasks.core.reorient.config.allegro_hand.allegro_hand_common import (
     ALLEGRO_HAND_ROBOT_CFG,
-    CUBE_CFG,
     GOAL_OBJECT_CFG,
     CubeCfg,
     PhysicsCfg,
 )
-from isaaclab_tasks.core.reorient.reorient_common import GOAL_MARKER_POSITION, IN_HAND_POS_OFFSET
-from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import EventCfg as ReorientEventCfg
-from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import ReorientObjectEnvCfg, ReorientObjectSceneCfg
-from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import RewardsCfg as ReorientRewardsCfg
-from isaaclab_tasks.core.reorient.reorient_manager_env_cfg import TerminationsCfg as ReorientTerminationsCfg
+from isaaclab_tasks.utils import preset
 
 from isaaclab_assets.robots.allegro import ALLEGRO_ACTUATED_JOINT_NAMES, ALLEGRO_FINGERTIP_BODY_NAMES
 
 
 @configclass
-class AllegroCubeSceneCfg(ReorientObjectSceneCfg):
+class AllegroCubeSceneCfg(InteractiveSceneCfg):
     """Shared reorientation scene with the Allegro hand and a ground plane."""
+
+    # ``clone_in_fabric`` is the only backend-varying field: PhysX/OvPhysX use Fabric
+    # cloning for speed, Newton does not support it.
+    clone_in_fabric = preset(default=False, physx=True, ovphysx=True, newton_mjwarp=False)
 
     num_envs = 8192
     env_spacing = 0.75
 
     robot: ArticulationCfg = ALLEGRO_HAND_ROBOT_CFG
-    object: CubeCfg = CUBE_CFG
+    object: CubeCfg = CubeCfg()
     ground = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
     light = AssetBaseCfg(
         prim_path="/World/Light",
@@ -55,11 +58,11 @@ class CommandsCfg:
 
     object_pose = mdp.ReorientCommandCfg(
         asset_name="object",
-        init_pos_offset=IN_HAND_POS_OFFSET,
+        init_pos_offset=(0.0, 0.0, -0.04),
         update_goal_on_success=True,
         orientation_success_threshold=0.2,
         make_quat_unique=False,
-        fixed_marker_pos=GOAL_MARKER_POSITION,
+        fixed_marker_pos=(-0.2, -0.45, 0.68),
         goal_pose_visualizer_cfg=GOAL_OBJECT_CFG,
         debug_vis=True,
     )
@@ -141,15 +144,65 @@ class ObservationsCfg:
 
 
 @configclass
-class EventCfg(ReorientEventCfg):
+class EventCfg:
     """Shared randomization terms with the Direct task's reset distribution.
 
-    The randomization terms are inherited and gated by
-    :attr:`AllegroCubeEnvCfg.enable_domain_randomization`.
+    Gated by :attr:`AllegroCubeEnvCfg.enable_domain_randomization`.
     """
 
-    reset_object = None
-    reset_robot_joints = None
+    robot_physics_material = EventTerm(
+        func=mdp.randomize_rigid_body_material,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
+            "static_friction_range": (0.7, 1.3),
+            "dynamic_friction_range": (0.7, 1.3),
+            "restitution_range": (0.0, 0.0),
+            "num_buckets": 250,
+        },
+    )
+    robot_scale_mass = EventTerm(
+        func=mdp.randomize_rigid_body_mass,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
+            "mass_distribution_params": (0.95, 1.05),
+            "operation": "scale",
+        },
+    )
+    robot_joint_stiffness_and_damping = EventTerm(
+        func=mdp.randomize_actuator_gains,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+            "stiffness_distribution_params": (0.3, 3.0),  # default: 3.0
+            "damping_distribution_params": (0.75, 1.5),  # default: 0.1
+            "operation": "scale",
+            "distribution": "log_uniform",
+        },
+    )
+
+    # -- object
+    object_physics_material = EventTerm(
+        func=mdp.randomize_rigid_body_material,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("object", body_names=".*"),
+            "static_friction_range": (0.7, 1.3),
+            "dynamic_friction_range": (0.7, 1.3),
+            "restitution_range": (0.0, 0.0),
+            "num_buckets": 250,
+        },
+    )
+    object_scale_mass = EventTerm(
+        func=mdp.randomize_rigid_body_mass,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("object"),
+            "mass_distribution_params": (0.4, 1.6),
+            "operation": "scale",
+        },
+    )
 
     reset_state = EventTerm(
         func=mdp.reset_reorient_state,
@@ -164,9 +217,19 @@ class EventCfg(ReorientEventCfg):
 
 
 @configclass
-class RewardsCfg(ReorientRewardsCfg):
+class RewardsCfg:
     """Shared reward terms tuned to the Direct task's scales."""
 
+    track_orientation_inv_l2 = RewTerm(
+        func=mdp.track_orientation_inv_l2,
+        weight=1.0,
+        params={"object_cfg": SceneEntityCfg("object"), "rot_eps": 0.1, "command_name": "object_pose"},
+    )
+    success_bonus = RewTerm(
+        func=mdp.success_bonus,
+        weight=250.0,
+        params={"object_cfg": SceneEntityCfg("object"), "command_name": "object_pose"},
+    )
     track_pos_l2 = RewTerm(
         func=mdp.track_pos_l2,
         weight=-10.0,
@@ -178,9 +241,10 @@ class RewardsCfg(ReorientRewardsCfg):
 
 
 @configclass
-class TerminationsCfg(ReorientTerminationsCfg):
+class TerminationsCfg:
     """Shared terminations reduced to the Direct task's fall condition."""
 
+    time_out = DoneTerm(func=mdp.time_out, time_out=True)
     object_out_of_reach = DoneTerm(
         func=mdp.object_away_from_goal,
         params={
@@ -193,10 +257,18 @@ class TerminationsCfg(ReorientTerminationsCfg):
 
 
 @configclass
-class AllegroCubeEnvCfg(ReorientObjectEnvCfg):
+class AllegroCubeEnvCfg(ManagerBasedRLEnvCfg):
     """Manager-based Allegro Hand task with Direct-compatible semantics."""
 
     scene: AllegroCubeSceneCfg = AllegroCubeSceneCfg()
+    decimation = 4
+    episode_length_s = 10.0
+    sim: SimulationCfg = SimulationCfg(
+        dt=1 / 120,
+        render_interval=decimation,
+        physics_material=RigidBodyMaterialBaseCfg(static_friction=1.0, dynamic_friction=1.0),
+        physics=PhysicsCfg(),
+    )
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
     commands: CommandsCfg = CommandsCfg()
@@ -204,11 +276,12 @@ class AllegroCubeEnvCfg(ReorientObjectEnvCfg):
     terminations: TerminationsCfg = TerminationsCfg()
     events: EventCfg = EventCfg()
 
-    enable_domain_randomization: bool = True
+    enable_domain_randomization: bool = False
     """Apply the shared startup domain-randomization terms.
 
-    The Direct Allegro task has no randomization, so disable this to compare the two
-    workflows directly. Changing it requires retraining.
+    The Direct Allegro task has no randomization, so this is off by default to keep the
+    two workflows comparable. Enable by appending ``env.enable_domain_randomization=true``
+    to the training command. Changing it requires retraining.
     """
 
     _DOMAIN_RANDOMIZATION_TERMS = (
@@ -219,11 +292,9 @@ class AllegroCubeEnvCfg(ReorientObjectEnvCfg):
         "object_scale_mass",
     )
 
+    viewer: ViewerCfg = ViewerCfg(eye=(2.0, 2.0, 2.0))
+
     def __post_init__(self):
-        super().__post_init__()
-        # mirrors the Direct cfg
-        self.episode_length_s = 10.0
-        self.sim.physics = PhysicsCfg()
         if not self.enable_domain_randomization:
             for term_name in self._DOMAIN_RANDOMIZATION_TERMS:
                 setattr(self.events, term_name, None)

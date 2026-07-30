@@ -31,8 +31,6 @@ CUBE_HALF_SIZE: tuple[float, float, float] = (0.03, 0.03, 0.03)
 
 
 # -- cube keypoint helpers, shared by the camera and state observation terms
-
-
 def _cube_corner_offsets(
     size: tuple[float, float, float], num_keypoints: int, device: torch.device | str
 ) -> torch.Tensor:
@@ -106,8 +104,6 @@ def cube_keypoints_from_quat(
 
 
 # -- command terms
-
-
 def goal_quat_diff(
     env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg, command_name: str, make_quat_unique: bool
 ) -> torch.Tensor:
@@ -133,8 +129,6 @@ def goal_quat_diff(
 
 
 # -- fingertip terms
-
-
 def fingertip_pos(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     """Flattened fingertip positions in the environment frame [m], shape ``(num_envs, num_fingertips * 3)``."""
     asset = env.scene[asset_cfg.name]
@@ -176,8 +170,6 @@ class fingertip_wrench(ManagerTermBase):
 
 
 # -- action terms
-
-
 def reorient_last_action(env: ManagerBasedRLEnv, action_name: str) -> torch.Tensor:
     """Return the Direct-compatible last action across same-step autoreset.
 
@@ -198,8 +190,6 @@ def reorient_last_action(env: ManagerBasedRLEnv, action_name: str) -> torch.Tens
 
 
 # -- composed observation groups
-
-
 class openai_policy_observation(ManagerTermBase):
     """Apply one stateful noise model to the concatenated OpenAI actor observation."""
 
