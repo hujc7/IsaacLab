@@ -18,12 +18,8 @@ from dataclasses import asdict, dataclass, fields
 from .object_library_cfg import SimReadyObjectFilterCfg, SimReadyObjectLibraryCfg
 
 logger = logging.getLogger(__name__)
-
 _AUDIT_PROGRESS_INTERVAL = 25
-"""How often to report progress while auditing, in candidates."""
-
-_MAX_INSTANCING_DEPTH = 8
-"""Upper bound on how deeply catalogue assets nest instanced prims, used to bound de-instancing."""
+"""Report progress every this many assets while measuring, so a cold run is not silent."""
 
 
 @dataclass
@@ -73,10 +69,6 @@ class ObjectSpec:
         return directory.lower().replace("_", "")
 
 
-_OBJECT_SPEC_FIELDS = frozenset(f.name for f in fields(ObjectSpec))
-"""Field names an audit-cache entry must carry to still be readable."""
-
-
 class SimReadyObjectLibrary:
     """Searches, audits, filters, and prepares SimReady assets for a manipulation task.
 
@@ -108,9 +100,12 @@ class SimReadyObjectLibrary:
 
     def __init__(self, cfg: SimReadyObjectLibraryCfg):
         self.cfg = cfg
+        self._download_dir = os.path.join(cfg.cache_dir, "assets")
+        self._prepared_dir = os.path.join(cfg.cache_dir, "prepared")
+        self._measurements_path = os.path.join(cfg.cache_dir, "measurements.json")
         self._cache: dict[str, dict | None] = {}
-        if os.path.exists(self.cfg.cache_path):
-            with open(self.cfg.cache_path) as f:
+        if os.path.exists(self._measurements_path):
+            with open(self._measurements_path) as f:
                 self._cache = json.load(f)
 
     """
@@ -118,11 +113,11 @@ class SimReadyObjectLibrary:
     """
 
     def search(self) -> list[str]:
-        """Return the distinct candidate assets, applying every natively supported filter.
+        """Return the distinct assets matching the configured description.
 
         One query is issued per phrase, because the index ranks by appearance and no single phrase
-        returns a geometry class. Filters the service supports are pushed server-side so unmatched
-        assets never consume the per-phrase result budget; the rest are completed by :meth:`select`.
+        returns a whole class of object. Properties the index can answer are asked of it; the rest
+        are settled by :meth:`select` once the assets have been measured.
 
         Returns:
             Candidate asset paths, ordered deterministically.
@@ -132,15 +127,14 @@ class SimReadyObjectLibrary:
         object_filter = self.cfg.object_filter
         library = AssetLibrary(raise_on_network_error=True)
         library.add_service_source(self.cfg.service_endpoint)
-        excluded = [_filter("PathContains", fragment) for fragment in object_filter.excluded_path_fragments]
+        excluded = [_search_filter("PathContains", fragment) for fragment in object_filter.excluded_path_fragments]
 
         found: dict[str, str] = {}
         for phrase in object_filter.search_phrases:
             try:
                 matches = library.search(
-                    include_all=[_filter("Phrase", phrase), *self._native_filters()],
+                    include_all=[_search_filter("Phrase", phrase), *self._native_filters()],
                     exclude_any=excluded,
-                    base_paths=list(object_filter.base_paths) or None,
                     max_count=self.cfg.results_per_phrase,
                 )
             except Exception:  # noqa: BLE001 -- one bad phrase must not sink the whole sweep
@@ -155,26 +149,14 @@ class SimReadyObjectLibrary:
         return sorted(found.values())
 
     def _native_filters(self) -> list:
-        """Build the service-side filters for every configured field the service supports."""
+        """Build the filters the search index can answer directly."""
         object_filter = self.cfg.object_filter
-        filters = [
-            # the service filters on height only; the other two axes are checked in select()
-            _filter("Height", minimum=object_filter.size_range[0], maximum=object_filter.size_range[1])
-        ]
-        if object_filter.min_relevance > 0.0:
-            filters.append(_filter("Relevance", minimum=object_filter.min_relevance))
-        for name, values in (
-            ("Feature", object_filter.required_features),
-            ("Profile", object_filter.required_profiles),
-            ("Class", object_filter.required_classes),
-            ("Tag", object_filter.required_tags),
-            ("Country", object_filter.required_countries),
-            ("ScenePOI", object_filter.required_scene_poi_tags),
-        ):
-            filters.extend(_filter(name, value) for value in values)
-        filters.extend(
-            _filter("ArbitraryDictValue", list(key_path), value) for key_path, value in object_filter.required_metadata
-        )
+        filters = [_search_filter("Feature", feature) for feature in object_filter.validated_features]
+        if object_filter.size_range is not None:
+            # the index bounds height only; the remaining axes are checked once measured
+            filters.append(
+                _search_filter("Height", minimum=object_filter.size_range[0], maximum=object_filter.size_range[1])
+            )
         return filters
 
     def fetch(self, url: str) -> str | None:
@@ -203,7 +185,7 @@ class SimReadyObjectLibrary:
         def mirror(remote: str) -> str:
             """Download one layer if it is not already local, and return where it landed."""
             relative = urllib.parse.urlparse(remote).path.lstrip("/")
-            local = os.path.join(self.cfg.download_dir, relative)
+            local = os.path.join(self._download_dir, relative)
             if os.path.exists(local):
                 return local
             os.makedirs(os.path.dirname(local), exist_ok=True)
@@ -268,22 +250,21 @@ class SimReadyObjectLibrary:
             if cached is None:
                 return None
             # entries written by an older field layout are regenerable, so re-audit rather than fail
-            if cached.keys() == _OBJECT_SPEC_FIELDS:
+            if cached.keys() == {f.name for f in fields(ObjectSpec)}:
                 return ObjectSpec(**{**cached, "dims": tuple(cached["dims"])})
             logger.debug("Discarding cache entry with an outdated layout: %s", url)
         spec = self._audit_uncached(url)
         self._cache[url] = None if spec is None else asdict(spec)
         return spec
 
-    def select(self, num_objects: int, candidates: list[str] | None = None) -> list[ObjectSpec]:
-        """Audit candidates and keep the objects the robot can work with.
+    def select(self, candidates: list[str] | None = None) -> list[ObjectSpec]:
+        """Measure the candidates and keep the ones satisfying every configured property.
 
         Args:
-            num_objects: Number of objects to keep.
-            candidates: Assets to audit. Defaults to the result of :meth:`search`.
+            candidates: Assets to measure. Defaults to the result of :meth:`search`.
 
         Returns:
-            At most :paramref:`num_objects` specs, ordered by ascending mass.
+            At most :attr:`~SimReadyObjectLibraryCfg.num_objects` specs, ordered by ascending mass.
         """
         object_filter = self.cfg.object_filter
         candidates = self.search() if candidates is None else candidates
@@ -303,14 +284,14 @@ class SimReadyObjectLibrary:
                     logger.info("Audited %d/%d candidates, kept %d.", index + 1, len(candidates), len(kept))
         self.save_cache()
 
-        if object_filter.distinct_families:
-            by_family: dict[str, ObjectSpec] = {}
-            for spec in kept:
-                by_family.setdefault(spec.family, spec)
-            logger.info("Found %d distinct families among %d usable assets.", len(by_family), len(kept))
-            kept = list(by_family.values())
+        if object_filter.max_per_product_family is not None:
+            per_family: dict[str, list[ObjectSpec]] = {}
+            for spec in sorted(kept, key=lambda s: s.url):
+                per_family.setdefault(spec.family, []).append(spec)
+            kept = [s for variants in per_family.values() for s in variants[: object_filter.max_per_product_family]]
+            logger.info("Kept %d assets across %d product families.", len(kept), len(per_family))
 
-        selected = sorted(kept, key=lambda spec: spec.mass)[:num_objects]
+        selected = sorted(kept, key=lambda spec: (spec.mass is None, spec.mass))[: self.cfg.num_objects]
 
         logger.info("Selected %d of %d usable objects from %d candidates.", len(selected), len(kept), len(candidates))
         for reason, count in sorted(dropped.items(), key=lambda item: -item[1]):
@@ -332,20 +313,19 @@ class SimReadyObjectLibrary:
         """
         from pxr import Sdf, Usd  # noqa: PLC0415
 
-        os.makedirs(self.cfg.prepared_dir, exist_ok=True)
+        os.makedirs(self._prepared_dir, exist_ok=True)
         prepared: list[str] = []
         for spec in specs:
-            out_path = os.path.join(self.cfg.prepared_dir, os.path.splitext(os.path.basename(spec.url))[0] + ".usda")
+            out_path = os.path.join(self._prepared_dir, os.path.splitext(os.path.basename(spec.url))[0] + ".usda")
             prepared.append(out_path)
             if os.path.exists(out_path):
                 continue
             stage = Usd.Stage.Open(self.fetch(spec.url), Usd.Stage.LoadAll)
             # instanced prims cannot be copied out, and traversal does not descend into one until it
             # has been de-instanced, so each pass can expose a further nested level
-            for _ in range(_MAX_INSTANCING_DEPTH):
-                instanced = [prim for prim in stage.Traverse() if prim.IsInstanceable()]
-                if not instanced:
-                    break
+            # traversal does not descend into an instanced prim until it has been de-instanced,
+            # so each pass can expose a further nested level; repeat until none remain
+            while instanced := [prim for prim in stage.Traverse() if prim.IsInstanceable()]:
                 for prim in instanced:
                     prim.SetInstanceable(False)
             layer = Sdf.Layer.CreateNew(out_path)
@@ -357,74 +337,48 @@ class SimReadyObjectLibrary:
             object_stage.GetRootLayer().Save()
         return prepared
 
-    def resolve(self, num_objects: int) -> list[str]:
-        """Search, select, and prepare in one call, reusing a previous resolution when possible.
+    def resolve(self) -> list[str]:
+        """Return task-ready USD paths for the configured objects.
 
-        The resolved asset list is recorded against a fingerprint of the query, so a repeat call with
-        the same configuration issues no search requests at all. That is what keeps every rank of a
-        distributed run on the same object set: the first to resolve writes the list, the rest read
-        it, instead of each querying a catalogue that may have changed in between.
-
-        Args:
-            num_objects: Number of objects to resolve.
+        The set an asset query resolves to is recorded to
+        :attr:`~SimReadyObjectLibraryCfg.resolution_path`. When that record exists it is used as-is,
+        so a run needs no search request and every machine -- and every rank of one job -- gets the
+        same objects even if the catalogue moves. Set
+        :attr:`~SimReadyObjectLibraryCfg.always_query` to resolve afresh.
 
         Returns:
             Local paths of the prepared USDs, ready to hand to a spawner.
         """
-        fingerprint = self._query_fingerprint(num_objects)
-        urls = self._load_resolution(fingerprint)
+        urls = None if self.cfg.always_query else self._load_resolution()
         if urls is None:
-            specs = self.select(num_objects)
-            self._save_resolution(fingerprint, num_objects, [spec.url for spec in specs])
+            specs = self.select()
+            self._save_resolution([spec.url for spec in specs])
         else:
-            logger.info("Reusing %d objects resolved earlier for this query.", len(urls))
+            logger.info("Using the %d objects recorded in %s.", len(urls), self.cfg.resolution_path)
             specs = [spec for spec in (self.audit(url) for url in urls) if spec is not None]
         return self.prepare(specs)
 
-    def _query_fingerprint(self, num_objects: int) -> str:
-        """Return a stable digest of everything that decides which objects a query resolves to."""
-        import hashlib  # noqa: PLC0415
-
-        object_filter = self.cfg.object_filter.to_dict()
-        # a predicate cannot be hashed by behaviour, so record what identifies it instead
-        predicate = self.cfg.object_filter.filter_func
-        object_filter["filter_func"] = getattr(predicate, "__qualname__", None)
-        query = {
-            "endpoint": self.cfg.service_endpoint,
-            "results_per_phrase": self.cfg.results_per_phrase,
-            "num_objects": num_objects,
-            "filter": object_filter,
-        }
-        return hashlib.sha256(json.dumps(query, sort_keys=True, default=str).encode()).hexdigest()[:16]
-
-    def _load_resolution(self, fingerprint: str) -> list[str] | None:
-        """Return the assets this query resolved to before, or ``None`` on a miss."""
-        if not os.path.exists(self.cfg.resolution_cache_path):
+    def _load_resolution(self) -> list[str] | None:
+        """Return the assets recorded for this configuration, or ``None`` when there is no record."""
+        if not os.path.exists(self.cfg.resolution_path):
             return None
-        with open(self.cfg.resolution_cache_path) as f:
-            entry = json.load(f).get(fingerprint)
-        return None if entry is None else entry["assets"]
+        with open(self.cfg.resolution_path) as f:
+            return json.load(f)["assets"]
 
-    def _save_resolution(self, fingerprint: str, num_objects: int, urls: list[str]) -> None:
-        """Record which assets this query resolved to, alongside the query itself for readability."""
-        path = self.cfg.resolution_cache_path
-        resolutions = {}
-        if os.path.exists(path):
-            with open(path) as f:
-                resolutions = json.load(f)
-        resolutions[fingerprint] = {
-            "num_objects": num_objects,
-            "search_phrases": list(self.cfg.object_filter.search_phrases),
-            "assets": urls,
-        }
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "w") as f:
-            json.dump(resolutions, f, indent=2, sort_keys=True)
+    def _save_resolution(self, urls: list[str]) -> None:
+        """Record the resolved assets, alongside the query that produced them for readability."""
+        os.makedirs(os.path.dirname(self.cfg.resolution_path) or ".", exist_ok=True)
+        with open(self.cfg.resolution_path, "w") as f:
+            json.dump(
+                {"search_phrases": list(self.cfg.object_filter.search_phrases), "assets": urls},
+                f,
+                indent=2,
+            )
 
     def save_cache(self) -> None:
-        """Persist the audits, so a later resolve costs no asset opens."""
-        os.makedirs(os.path.dirname(self.cfg.cache_path) or ".", exist_ok=True)
-        with open(self.cfg.cache_path, "w") as f:
+        """Persist the measurements, so a later resolve opens no assets."""
+        os.makedirs(os.path.dirname(self._measurements_path) or ".", exist_ok=True)
+        with open(self._measurements_path, "w") as f:
             json.dump(self._cache, f)
 
     """
@@ -464,12 +418,12 @@ class SimReadyObjectLibrary:
             body_path,
             mass,
             (size[0], size[1], size[2]),
-            _latest_validation_passed(stage, self.cfg.object_filter.required_features),
+            _latest_validation_passed(stage, self.cfg.object_filter.validated_features),
         )
 
 
-def _filter(name: str, *args, **kwargs):
-    """Build a ``SearchFilter<name>`` from the search package, imported on use."""
+def _search_filter(name: str, *args, **kwargs):
+    """Return a ``SearchFilter<name>`` instance from the search package, imported on use."""
     import simready.search  # noqa: PLC0415
 
     return getattr(simready.search, f"SearchFilter{name}")(*args, **kwargs)
@@ -492,29 +446,27 @@ def _latest_validation_passed(stage, features: tuple[str, ...]) -> bool:
 
 
 def _rejection_reason(spec: ObjectSpec | None, cfg: SimReadyObjectFilterCfg) -> str | None:
-    """Return why an asset is unusable for the task, or ``None`` when it passes every filter.
+    """Return why an asset is unusable, or ``None`` when it satisfies every configured property.
 
-    Only the checks the search service cannot answer are made here. The service has already applied
-    everything it supports, so reaching this point means the asset looked right and now has to prove
-    it is actually usable.
+    Only properties the search index could not settle are checked here, on the measured asset.
     """
     if spec is None:
         return "could not be opened"
     if cfg.require_rigid_body and spec.body_path is None:
-        return "no rigid body (multibody asset: colliders but nothing dynamic)"
-    if cfg.require_latest_validation and not spec.validation_passed:
+        return "no rigid body: collision geometry but nothing physics can move"
+    if not spec.validation_passed:
         return "newest-dated validation verdict is a failure"
-    if spec.max_dim > cfg.size_range[1]:
-        # the service bounded height only, so the widest axis is still unchecked
-        return "too large for the workspace"
-    if spec.min_dim < cfg.size_range[0]:
-        return "too thin for stable contact"
-    if spec.mass is None:
-        return "no authored mass"
-    if spec.mass > cfg.mass_range[1]:
-        return "heavier than the gripper can hold"
-    if spec.mass < cfg.mass_range[0]:
-        return "too light for stable contact"
-    if cfg.filter_func is not None and not cfg.filter_func(spec):
-        return "rejected by the configured filter function"
+    if cfg.size_range is not None:
+        # the index bounded height only, so the widest and narrowest axes are still unchecked
+        if spec.max_dim > cfg.size_range[1]:
+            return "too large for the workspace"
+        if spec.min_dim < cfg.size_range[0]:
+            return "too thin for stable contact"
+    if cfg.mass_range is not None:
+        if spec.mass is None:
+            return "no authored mass"
+        if spec.mass > cfg.mass_range[1]:
+            return "heavier than the gripper can hold"
+        if spec.mass < cfg.mass_range[0]:
+            return "too light for stable contact"
     return None

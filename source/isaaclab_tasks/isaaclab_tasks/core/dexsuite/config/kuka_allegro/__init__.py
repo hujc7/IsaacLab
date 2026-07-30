@@ -34,11 +34,10 @@ gym.register(
 )
 
 ##
-# SimReady catalogue environment.
+# Multi-object environment backed by the SimReady catalogue.
 ##
-
 gym.register(
-    id="Isaac-Lift-KukaAllegro-SimReady",
+    id="Isaac-Lift-KukaAllegro-Multi-SimReady-Object",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={

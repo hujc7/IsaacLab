@@ -3,153 +3,82 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Configuration for resolving SimReady catalogue assets into task-ready objects.
-
-Filter fields are annotated with where they are applied:
-
-* **[service]** -- the USD-Search service supports the filter natively, so it is pushed server-side
-  and unmatched assets never enter the result budget.
-* **[service, partial]** -- the service supports part of the filter. The supported part is pushed
-  server-side as a pre-filter and the remainder is completed locally.
-* **[local]** -- the service does not support the filter. It is applied after opening the asset,
-  which is why :class:`SimReadyObjectLibrary` caches audits.
-"""
+"""Configuration for resolving SimReady catalogue assets into task-ready objects."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import MISSING
-from typing import TYPE_CHECKING
 
 from isaaclab.utils.assets import SIMREADY_SEARCH_SERVICE_ENDPOINT
 from isaaclab.utils.configclass import configclass
 
-if TYPE_CHECKING:
-    from .object_library import ObjectSpec
-
 
 @configclass
 class SimReadyObjectFilterCfg:
-    """Which catalogue objects to keep for a task.
+    """Which catalogue assets to keep.
 
-    The fields fall into two groups. The first mirrors what the USD-Search service can filter on, so
-    those are answered by the service. The second expresses what a manipulation task actually needs
-    to know -- how heavy an object is, how thin its smallest axis is, whether its newest validation
-    verdict still passes -- none of which the service returns, let alone filters on. Those are
-    applied here, after opening the asset.
+    Every field names a property of the asset. Leaving a field unset does not constrain that
+    property. Where a property comes from -- the search index, or the asset itself -- is an
+    implementation detail: results are cached, so it is paid once.
 
-    Every bound expresses *robot capability*, never a judgement about the asset. Authored masses in
-    particular are treated as ground truth -- a canned good genuinely is heavy -- so an object is
-    dropped because the gripper could not hold it, not because the number looks surprising.
+    Authored masses and sizes are treated as real data. An object is dropped because this robot
+    could not handle it, never because the asset looks wrong.
     """
 
-    """
-    Filters the search service applies.
-    """
+    search_phrases: tuple[str, ...] = ()
+    """Free-text descriptions of the objects wanted, for example ``("mug", "cereal box")``.
 
-    search_phrases: tuple[str, ...] = MISSING
-    """**[service]** Phrases whose union forms the candidate pool, one query each.
-
-    The index ranks by appearance rather than by geometry, so no single phrase returns a shape class
-    and coverage comes from the breadth of the phrasing instead.
-    """
-
-    required_features: tuple[str, ...] = ("FET003_BASE_PHYSX",)
-    """**[service]** SimReady features every match must carry.
-
-    ``FET003_BASE_PHYSX`` selects single-body PhysX-ready assets. ``FET004_BASE_PHYSX`` is the
-    *multibody* feature and so is the wrong choice for a task needing one rigid body per object.
-    """
-
-    required_profiles: tuple[str, ...] = ()
-    """**[service]** SimReady profiles every match must carry (e.g. ``"Prop-Robotics-Isaac"``)."""
-
-    required_classes: tuple[str, ...] = ()
-    """**[service]** Semantic classes every match must carry."""
-
-    required_tags: tuple[str, ...] = ()
-    """**[service]** Catalogue tags every match must carry."""
-
-    required_countries: tuple[str, ...] = ()
-    """**[service]** Countries whose regional variants to keep (e.g. packaging localisation)."""
-
-    required_scene_poi_tags: tuple[str, ...] = ()
-    """**[service]** Scene points-of-interest every match must be annotated with."""
-
-    required_metadata: tuple[tuple[tuple[str, ...], str], ...] = ()
-    """**[service]** Arbitrary metadata entries, each a ``(key path, exact value)`` pair.
-
-    The service compares the value exactly, so this cannot express ranges or negation.
+    This chooses a domain rather than a capability. The index matches on appearance, so coverage
+    comes from the breadth of the phrasing, and the words need not be catalogue terms. Left unset,
+    objects of every kind are considered as long as they satisfy the remaining fields.
     """
 
     excluded_path_fragments: tuple[str, ...] = ()
-    """**[service]** Path substrings that disqualify a match.
+    """Catalogue sub-trees to skip, for example ``("Warehouse", "Machines")``.
 
-    Excluding at the service keeps unusable assets out of the per-phrase result budget instead of
-    spending it on results that are discarded locally.
+    Useful to keep a domain coherent: a kitchen scene has no use for engine components, even ones
+    small and light enough to pick up.
     """
 
-    base_paths: tuple[str, ...] = ()
-    """**[service]** Catalogue sub-trees to search. Empty searches the whole catalogue."""
+    size_range: tuple[float, float] | None = None
+    """Accepted bounding-box extents [m] as ``(minimum, maximum)``, applied to every axis.
 
-    min_relevance: float = 0.0
-    """**[service]** Minimum relevance score for a match to be considered."""
-
-    """
-    Filters completed after opening the asset.
+    The smallest extent must exceed the minimum, since a thin object gives the fingers nothing to
+    close on, and the largest must stay under the maximum to fit the workspace.
     """
 
-    size_range: tuple[float, float] = MISSING
-    """**[service, partial]** Accepted bounding-box extents [m], as ``(minimum, maximum)``.
-
-    The smallest extent must exceed the lower bound, since a thin object gives the fingers nothing to
-    close on, and the largest must stay under the upper bound to fit the workspace.
-
-    The service filters on height alone, so it is queried with this range as a pre-filter and the
-    remaining two axes are checked locally. An object that is short but very wide therefore passes
-    the service and is rejected here.
-    """
-
-    mass_range: tuple[float, float] = MISSING
-    """**[local]** Accepted authored mass [kg], as ``(minimum, maximum)``.
+    mass_range: tuple[float, float] | None = None
+    """Accepted authored mass [kg] as ``(minimum, maximum)``.
 
     The upper bound is what the gripper can hold; the lower bound excludes objects so light that
-    contact is numerically unstable. The service neither returns nor filters on mass.
+    contact is numerically unstable.
+    """
+
+    validated_features: tuple[str, ...] = ("FET003_BASE_PHYSX",)
+    """Validation features the asset must currently pass.
+
+    ``FET003_BASE_PHYSX`` certifies a single rigid body ready for PhysX. ``FET004_BASE_PHYSX`` is
+    the multibody equivalent, and the wrong choice for a task that needs one rigid body per object.
+
+    The verdict is re-read from the asset rather than taken from the search index, because the index
+    matches assets that passed on *some* date: one that later regressed still comes back as a hit.
     """
 
     require_rigid_body: bool = True
-    """**[local]** Whether to require a dynamic rigid body.
+    """Whether an asset must contain a body that physics can move.
 
-    Some published assets carry colliders but nothing dynamic, so they are not simulatable as
-    objects. Presence of a body is not exposed by the service.
+    Some catalogue assets carry collision geometry but no rigid body, so they can be collided with
+    yet never fall, get pushed, or be picked up -- scenery rather than props. They are unusable as
+    task objects and are a large share of the catalogue: 61 of 210 candidates in one table-top sweep.
     """
 
-    require_latest_validation: bool = True
-    """**[local]** Whether the newest-dated verdict for :attr:`required_features` must be a pass.
+    max_per_product_family: int | None = None
+    """How many variants of one product to keep, or ``None`` for no limit.
 
-    This closes a real gap rather than duplicating the service filter: the service matches assets
-    that passed on *some* date, so one that later regressed still comes back as a hit. Re-reading the
-    dated verdicts from the asset is the authoritative check.
-    """
-
-    filter_func: Callable[[ObjectSpec], bool] | None = None
-    """**[local]** Extra predicate an object must satisfy, or ``None`` to apply no extra check.
-
-    Receives the audited :class:`~isaaclab.utils.simready.ObjectSpec` and returns whether to keep the
-    object. Use it for criteria this configuration does not name -- an aspect-ratio bound, a density
-    computed from mass and extents, a naming convention -- without subclassing the library.
-
-    The spec carries what the built-in filters need: source path, rigid-body path, authored mass,
-    bounding-box extents, and the validation verdict. Anything beyond that is not available here,
-    because the audit is cached in that form.
-    """
-
-    distinct_families: bool = True
-    """**[local]** Whether to keep at most one asset per product family.
-
-    The catalogue ships many near-identical variants (``Golf_Ball`` and ``Golf_Ball_A01`` through
-    ``A04``; ``Boxed_Drink_A01`` through ``E01``), so a set of unique *files* can still render as a
-    grid of look-alikes -- file uniqueness is not visual variety.
+    The catalogue ships near-identical variants (``Golf_Ball``, ``Golf_Ball_A01`` through ``A04``),
+    so a set of unique files can still look like one object repeated. Families are identified by
+    stripping trailing variant codes from the asset name, which is a naming convention rather than a
+    published property.
     """
 
 
@@ -157,58 +86,51 @@ class SimReadyObjectFilterCfg:
 class SimReadyObjectLibraryCfg:
     """Configuration for :class:`~isaaclab.utils.simready.SimReadyObjectLibrary`."""
 
+    num_objects: int = MISSING
+    """How many distinct objects to resolve."""
+
+    object_filter: SimReadyObjectFilterCfg = SimReadyObjectFilterCfg()
+    """Which catalogue assets to keep."""
+
+    resolution_path: str = MISSING
+    """JSON file recording which assets this configuration resolved to.
+
+    A given configuration resolves to a fixed set of assets, so this file is the reproducible record
+    of that set. Commit it next to the task configuration and everyone who runs the task fetches
+    exactly those assets: no search request, no credentials, and no chance of two machines -- or two
+    ranks of one job -- resolving differently because the catalogue moved between queries.
+
+    Delete the file, or set :attr:`always_query`, to pick up the catalogue's current answer.
+    """
+
+    always_query: bool = False
+    """Whether to re-query the service even when :attr:`resolution_path` already holds an answer."""
+
     service_endpoint: str = SIMREADY_SEARCH_SERVICE_ENDPOINT
     """URL of the USD-Search service."""
 
-    audit_workers: int = 16
-    """How many candidates to audit concurrently.
+    cache_dir: str = "logs/simready"
+    """Directory for downloaded assets, their measurements, and the prepared USDs.
 
-    Auditing is bound by per-file network round-trips rather than by bandwidth or CPU: an asset's
-    layers are fetched one request at a time, while opening the stage and measuring it costs
-    milliseconds. Auditing several assets at once therefore scales close to linearly. Lower this if
-    the asset host objects to the concurrency.
+    Everything here is derived and can be deleted; only :attr:`resolution_path` is worth keeping.
+    Measuring an asset means fetching its whole layer closure, so the first resolve of a catalogue
+    costs minutes and every later one is instant.
+    """
+
+    audit_workers: int = 16
+    """How many assets to measure concurrently.
+
+    Measuring is bound by per-file network round-trips rather than bandwidth or CPU, so doing
+    several at once scales close to linearly. Lower this if the asset host objects.
     """
 
     layer_workers: int = 8
-    """How many of an asset's layers to fetch at once.
+    """How many of one asset's layers to fetch concurrently.
 
-    A SimReady asset is a tree of layers (wrapper, payloads, physics, materials, textures) and each
-    one costs a separate request, so fetching them one at a time makes an asset as slow as the sum
-    of its round-trips. A layer's own references are only known once it has been parsed, so the tree
-    is walked level by level -- but every layer within a level is independent.
+    An asset is a tree of layers -- wrapper, payloads, physics, materials, textures -- each costing
+    a separate request. A layer's own references are only known once it has been read, so the tree
+    is walked level by level, but layers within a level are independent.
     """
 
     results_per_phrase: int = 100
     """Maximum number of matches to request per search phrase."""
-
-    cache_path: str = "logs/simready/audit_cache.json"
-    """JSON file holding audit results, so each asset is opened at most once, ever.
-
-    Opening an asset means fetching it and its whole layer closure from remote storage, which is the
-    expensive step. Caching is what makes resolution affordable inside a training script: the first
-    sweep of a catalogue costs minutes, every later one is instant.
-    """
-
-    resolution_cache_path: str = "logs/simready/resolved_objects.json"
-    """JSON file recording which assets a given query resolved to.
-
-    Without it every construction re-queries the service -- once per search phrase, and once per rank
-    under distributed training, where a catalogue update between ranks would hand them different
-    object sets. The file is keyed by a fingerprint of the effective query, so changing any filter
-    resolves afresh, and it is small and ordered enough to commit when a run has to be reproducible.
-
-    .. note::
-        :attr:`SimReadyObjectFilterCfg.filter_func` is fingerprinted by name only, since a function
-        body cannot be hashed meaningfully. Editing a predicate in place without renaming it will
-        reuse the previous resolution; delete this file to force a re-resolve.
-    """
-
-    download_dir: str = "logs/simready/downloads"
-    """Directory mirroring fetched assets, laid out to match their remote paths."""
-
-    prepared_dir: str = "logs/simready/prepared"
-    """Directory receiving the task-ready USDs written by
-    :meth:`~isaaclab.utils.simready.SimReadyObjectLibrary.prepare`."""
-
-    object_filter: SimReadyObjectFilterCfg = SimReadyObjectFilterCfg()
-    """Which catalogue objects to keep."""

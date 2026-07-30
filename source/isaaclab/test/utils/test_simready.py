@@ -3,9 +3,9 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Tests for capability-based SimReady object selection.
+"""Tests for resolving SimReady catalogue assets into task-ready objects.
 
-Selection runs entirely off cached audits, so these tests need neither the simulation app nor the
+Selection runs off cached measurements, so these tests need neither the simulation app nor the
 search service: the cache is pre-populated and every asset resolves from it.
 """
 
@@ -25,18 +25,8 @@ from isaaclab.utils.simready import (
 from isaaclab.utils.simready.object_library import _rejection_reason
 
 
-def make_filter(**kwargs) -> SimReadyObjectFilterCfg:
-    """Build a fully specified filter, since the config carries no task defaults."""
-    return SimReadyObjectFilterCfg(
-        search_phrases=("box",),
-        size_range=kwargs.pop("size_range", (0.02, 0.15)),
-        mass_range=kwargs.pop("mass_range", (0.005, 3.0)),
-        **kwargs,
-    )
-
-
 def make_spec(url: str, mass: float | None = 0.2, dims: tuple[float, float, float] = (0.07, 0.07, 0.07), **kwargs):
-    """Build a spec that passes every default filter unless an argument says otherwise."""
+    """Build a spec that satisfies every property in :func:`make_filter` unless told otherwise."""
     return ObjectSpec(
         url=url,
         body_path=kwargs.get("body_path", "/RootNode/Geometry/body"),
@@ -46,22 +36,33 @@ def make_spec(url: str, mass: float | None = 0.2, dims: tuple[float, float, floa
     )
 
 
-def make_library(tmp_path, specs: list[ObjectSpec]) -> SimReadyObjectLibrary:
-    """Build a library whose audit cache already holds ``specs``, so no asset is ever opened."""
-    cache_path = tmp_path / "audit_cache.json"
-    cache_path.write_text(json.dumps({spec.url: asdict(spec) for spec in specs}))
-    cfg = SimReadyObjectLibraryCfg(object_filter=make_filter())
-    cfg.cache_path = str(cache_path)
-    cfg.resolution_cache_path = str(tmp_path / "resolved_objects.json")
-    cfg.download_dir = str(tmp_path / "downloads")
-    cfg.prepared_dir = str(tmp_path / "prepared")
-    return SimReadyObjectLibrary(cfg)
+def make_filter(**kwargs) -> SimReadyObjectFilterCfg:
+    """Build a filter constraining size and mass, the properties most tests exercise."""
+    kwargs.setdefault("size_range", (0.02, 0.15))
+    kwargs.setdefault("mass_range", (0.005, 3.0))
+    return SimReadyObjectFilterCfg(**kwargs)
+
+
+def make_library(tmp_path, specs: list[ObjectSpec], num_objects: int = 10, **filter_kwargs):
+    """Build a library whose measurements are already cached, so no asset is ever opened."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir(exist_ok=True)
+    (cache_dir / "measurements.json").write_text(json.dumps({spec.url: asdict(spec) for spec in specs}))
+    cfg = SimReadyObjectLibraryCfg(
+        num_objects=num_objects,
+        object_filter=make_filter(**filter_kwargs),
+        resolution_path=str(tmp_path / "objects.json"),
+        cache_dir=str(cache_dir),
+    )
+    library = SimReadyObjectLibrary(cfg)
+    library.prepare = lambda selected: [spec.url for spec in selected]
+    return library
 
 
 class TestRejectionReason:
-    """An asset is rejected for what this robot can handle, never for how the asset was authored."""
+    """An asset is rejected for a property this robot cannot work with, never for how it was made."""
 
-    def test_asset_within_every_bound_is_accepted(self):
+    def test_asset_satisfying_every_property_is_accepted(self):
         assert _rejection_reason(make_spec("a/Apple/a.usd"), make_filter()) is None
 
     @pytest.mark.parametrize(
@@ -83,17 +84,15 @@ class TestRejectionReason:
     def test_asset_that_fails_to_open_is_rejected(self):
         assert _rejection_reason(None, make_filter()) == "could not be opened"
 
-    def test_stale_validation_is_accepted_when_the_check_is_disabled(self):
-        object_filter = make_filter()
-        object_filter.require_latest_validation = False
-        assert _rejection_reason(make_spec("a/Milk/a.usd", validation_passed=False), object_filter) is None
+    def test_an_unset_property_is_not_constrained(self):
+        """Leaving a field unset must not filter on it, however extreme the value."""
+        unconstrained = SimReadyObjectFilterCfg()
+        assert _rejection_reason(make_spec("a/Anvil/a.usd", mass=500.0, dims=(2.0, 2.0, 2.0)), unconstrained) is None
 
     def test_widening_the_mass_range_accepts_a_heavier_asset(self):
-        """The bound is a statement about the gripper, so a stronger gripper keeps more objects."""
-        object_filter = make_filter()
-        assert _rejection_reason(make_spec("a/Can/a.usd", mass=5.0), object_filter) is not None
-        object_filter.mass_range = (0.005, 6.0)
-        assert _rejection_reason(make_spec("a/Can/a.usd", mass=5.0), object_filter) is None
+        """The bound describes the gripper, so a stronger one keeps more objects."""
+        assert _rejection_reason(make_spec("a/Can/a.usd", mass=5.0), make_filter()) is not None
+        assert _rejection_reason(make_spec("a/Can/a.usd", mass=5.0), make_filter(mass_range=(0.005, 6.0))) is None
 
 
 class TestObjectSpec:
@@ -118,161 +117,135 @@ class TestObjectSpec:
 
 
 class TestSelect:
-    """Selection audits candidates, drops what the robot cannot handle, and stratifies by mass."""
+    """Selection measures the candidates and keeps those satisfying every configured property."""
 
     def test_select_keeps_only_usable_candidates(self, tmp_path):
         specs = [make_spec("a/Apple/a.usd"), make_spec("a/Anvil/a.usd", mass=9.0), make_spec("a/Pear/a.usd")]
         library = make_library(tmp_path, specs)
 
-        selected = library.select(num_objects=10, candidates=[spec.url for spec in specs])
+        selected = library.select(candidates=[spec.url for spec in specs])
 
         assert sorted(spec.url for spec in selected) == ["a/Apple/a.usd", "a/Pear/a.usd"]
 
-    def test_a_custom_filter_can_reject_what_the_named_fields_cannot(self, tmp_path):
-        """Aspect ratio is not a config field, so it has to be expressible as a predicate."""
-        cube = make_spec("a/Cube/a.usd", dims=(0.08, 0.08, 0.08))
-        slab = make_spec("a/Slab/a.usd", dims=(0.14, 0.10, 0.03))
-        library = make_library(tmp_path, [cube, slab])
-        library.cfg.object_filter.filter_func = lambda spec: spec.max_dim / spec.min_dim < 2.0
+    def test_select_returns_at_most_the_requested_count(self, tmp_path):
+        specs = [make_spec(f"a/O{i}/a.usd", mass=0.1 + i * 0.05) for i in range(8)]
+        library = make_library(tmp_path, specs, num_objects=3)
 
-        selected = library.select(num_objects=10, candidates=[cube.url, slab.url])
+        assert len(library.select(candidates=[spec.url for spec in specs])) == 3
 
-        assert [spec.url for spec in selected] == ["a/Cube/a.usd"]
-
-    def test_select_keeps_one_asset_per_family(self, tmp_path):
-        """Unique files are not visual variety: five golf balls still render as one object."""
+    def test_a_product_family_cap_limits_near_identical_variants(self, tmp_path):
+        """Unique files are not visual variety: five golf balls still look like one object."""
         specs = [make_spec(f"a/Golf_Ball_A0{i}/a.usd") for i in range(5)] + [make_spec("a/Pear/a.usd")]
-        library = make_library(tmp_path, specs)
+        library = make_library(tmp_path, specs, max_per_product_family=1)
 
-        selected = library.select(num_objects=10, candidates=[spec.url for spec in specs])
+        selected = library.select(candidates=[spec.url for spec in specs])
 
         assert sorted(spec.family for spec in selected) == ["golfball", "pear"]
 
-    def test_select_keeps_every_variant_when_family_grouping_is_disabled(self, tmp_path):
+    def test_variants_are_kept_when_no_family_cap_is_set(self, tmp_path):
         specs = [make_spec(f"a/Golf_Ball_A0{i}/a.usd") for i in range(5)]
         library = make_library(tmp_path, specs)
-        library.cfg.object_filter.distinct_families = False
 
-        selected = library.select(num_objects=10, candidates=[spec.url for spec in specs])
-
-        assert len(selected) == 5
+        assert len(library.select(candidates=[spec.url for spec in specs])) == 5
 
 
-class TestAuditCache:
-    """Audits survive a round trip, so a later resolve opens no assets."""
+class TestMeasurementCache:
+    """Measurements survive a round trip, so a later resolve opens no assets."""
 
-    def test_cached_audit_restores_the_bounding_box_as_a_tuple(self, tmp_path):
+    def test_cached_measurement_restores_the_bounding_box_as_a_tuple(self, tmp_path):
         """JSON has no tuple, so a round trip must not silently turn the extents into a list."""
         spec = make_spec("a/Apple/a.usd", dims=(0.07, 0.08, 0.09))
-        library = make_library(tmp_path, [spec])
-
-        restored = library.audit(spec.url)
+        restored = make_library(tmp_path, [spec]).audit(spec.url)
 
         assert restored.dims == (0.07, 0.08, 0.09)
         assert restored.max_dim == pytest.approx(0.09)
 
     def test_an_asset_that_failed_to_open_is_not_retried(self, tmp_path):
-        """Caching the failure is what keeps a broken asset from being fetched on every resolve."""
+        """Caching the failure keeps a broken asset from being fetched on every resolve."""
         library = make_library(tmp_path, [])
         library._cache["a/Broken/a.usd"] = None
 
         assert library.audit("a/Broken/a.usd") is None
 
     def test_entry_from_an_older_field_layout_is_discarded(self, tmp_path):
-        """A cache is regenerable, so a layout change must re-audit rather than raise."""
-        cache_path = tmp_path / "audit_cache.json"
-        cache_path.write_text(
-            json.dumps(
-                {
-                    "a/Apple/a.usd": {
-                        "url": "a/Apple/a.usd",
-                        "body_path": "/B",
-                        "mass": 0.2,
-                        "dims": [0.07, 0.07, 0.07],
-                        "fet003_passed": True,  # the field this attribute used to be called
-                    }
-                }
-            )
-        )
-        cfg = SimReadyObjectLibraryCfg(object_filter=make_filter())
-        cfg.cache_path = str(cache_path)
-        cfg.download_dir = str(tmp_path / "downloads")
-        library = SimReadyObjectLibrary(cfg)
+        """The cache is regenerable, so a layout change must re-measure rather than raise."""
+        library = make_library(tmp_path, [])
+        library._cache["a/Apple/a.usd"] = {
+            "url": "a/Apple/a.usd",
+            "body_path": "/B",
+            "mass": 0.2,
+            "dims": [0.07, 0.07, 0.07],
+            "fet003_passed": True,  # the field validation_passed used to be called
+        }
 
-        # the stale entry is dropped, so the asset is re-audited; it is unreachable here, hence None
-        assert library.audit("a/Apple/a.usd") is None
-
-    def test_saved_cache_is_reused_by_a_later_library(self, tmp_path):
-        spec = make_spec("a/Apple/a.usd")
-        make_library(tmp_path, [spec]).save_cache()
-
-        cfg = SimReadyObjectLibraryCfg(object_filter=make_filter())
-        cfg.cache_path = str(tmp_path / "audit_cache.json")
-        assert SimReadyObjectLibrary(cfg).audit(spec.url).url == spec.url
+        assert library.audit("a/Apple/a.usd") is None  # re-measured, and unreachable in a test
 
 
-class TestResolutionCache:
-    """A repeat resolve must not re-query the service, so every rank sees the same object set."""
+class TestResolutionRecord:
+    """The recorded asset set is authoritative, so a run needs no search service."""
 
-    def _library(self, tmp_path, specs, **filter_kwargs):
-        library = make_library(tmp_path, specs)
-        library.cfg.object_filter = make_filter(**filter_kwargs)
-        library.prepare = lambda selected: [spec.url for spec in selected]
-        library.search = lambda: self._record() or [spec.url for spec in specs]
+    def _library(self, tmp_path, specs, **kwargs):
+        library = make_library(tmp_path, specs, **kwargs)
+        library.search = lambda: self._searched() or [spec.url for spec in specs]
         return library
 
-    def _record(self):
+    def _searched(self):
         self.searches += 1
 
-    def test_repeat_resolve_issues_no_search(self, tmp_path):
+    def test_first_resolve_records_what_it_found(self, tmp_path):
         self.searches = 0
         specs = [make_spec(f"a/O{i}/a.usd", mass=0.1 + i * 0.05) for i in range(6)]
 
-        first = self._library(tmp_path, specs).resolve(4)
-        second = self._library(tmp_path, specs).resolve(4)
+        resolved = self._library(tmp_path, specs, num_objects=4).resolve()
 
-        assert first == second
-        assert self.searches == 1, "the second resolve must be answered from the cache"
+        recorded = json.loads((tmp_path / "objects.json").read_text())
+        assert len(resolved) == 4
+        assert recorded["assets"] == resolved
+        assert self.searches == 1
 
-    def test_changing_a_filter_resolves_afresh(self, tmp_path):
-        """The fingerprint covers the filter, so a different query cannot reuse the old answer."""
+    def test_a_later_resolve_uses_the_record_instead_of_searching(self, tmp_path):
         self.searches = 0
         specs = [make_spec(f"a/O{i}/a.usd", mass=0.1 + i * 0.05) for i in range(6)]
+        first = self._library(tmp_path, specs, num_objects=4).resolve()
 
-        self._library(tmp_path, specs).resolve(4)
-        self._library(tmp_path, specs, mass_range=(0.005, 0.2)).resolve(4)
+        second = self._library(tmp_path, specs, num_objects=4).resolve()
+
+        assert second == first
+        assert self.searches == 1, "the recorded set must be used as-is"
+
+    def test_the_record_is_used_even_when_the_filter_changes(self, tmp_path):
+        """The record is the reproducible answer; editing the config does not silently re-resolve."""
+        self.searches = 0
+        specs = [make_spec(f"a/O{i}/a.usd", mass=0.1 + i * 0.05) for i in range(6)]
+        first = self._library(tmp_path, specs, num_objects=4).resolve()
+
+        widened = self._library(tmp_path, specs, num_objects=4, mass_range=(0.005, 0.2)).resolve()
+
+        assert widened == first
+        assert self.searches == 1
+
+    def test_always_query_resolves_afresh(self, tmp_path):
+        self.searches = 0
+        specs = [make_spec(f"a/O{i}/a.usd", mass=0.1 + i * 0.05) for i in range(6)]
+        self._library(tmp_path, specs, num_objects=4).resolve()
+
+        library = self._library(tmp_path, specs, num_objects=4)
+        library.cfg.always_query = True
+        library.resolve()
 
         assert self.searches == 2
 
-    def test_resolution_is_recorded_in_a_readable_form(self, tmp_path):
+    def test_a_recorded_run_reaches_neither_the_service_nor_the_search_package(self, tmp_path):
+        """A recorded set has to work with no network and without the optional search package."""
         self.searches = 0
         specs = [make_spec(f"a/O{i}/a.usd", mass=0.1 + i * 0.05) for i in range(6)]
-        library = self._library(tmp_path, specs)
+        self._library(tmp_path, specs, num_objects=4).resolve()
 
-        library.resolve(3)
-
-        recorded = json.loads((tmp_path / "resolved_objects.json").read_text())
-        assert len(recorded) == 1
-        entry = next(iter(recorded.values()))
-        assert entry["num_objects"] == 3
-        assert len(entry["assets"]) == 3
-
-    def test_a_cached_launch_needs_neither_network_nor_the_search_package(self, tmp_path):
-        """First launch resolves against the service; every later one must not reach it at all.
-
-        The task resolves its objects while its configuration is built, so a cached launch has to
-        work on a machine that has no network and no optional search package installed.
-        """
-        self.searches = 0
-        specs = [make_spec(f"a/O{i}/a.usd", mass=0.1 + i * 0.05) for i in range(6)]
-        first = self._library(tmp_path, specs)
-        first.resolve(4)
-
-        cached = self._library(tmp_path, specs)
+        library = make_library(tmp_path, specs, num_objects=4)
 
         def unavailable():
             raise ModuleNotFoundError("No module named 'simready'")
 
-        cached.search = unavailable
+        library.search = unavailable
 
-        assert len(cached.resolve(4)) == 4
+        assert len(library.resolve()) == 4

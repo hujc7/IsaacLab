@@ -7,22 +7,20 @@
 
 The stock lift task already provides everything multi-object grasping needs: a multi-finger hand,
 object point-cloud observations, contact-shaped rewards, a per-environment table, and a difficulty
-curriculum. This configuration therefore changes exactly one thing -- which objects are spawned --
-by replacing the primitive shapes with catalogue assets resolved when the configuration is built.
+curriculum. This configuration therefore changes one thing -- which objects are spawned -- by
+replacing the primitive shapes with catalogue assets.
 
-Objects are kept or rejected by what this robot can handle, never by rewriting the asset. Scale and
-authored mass are left as published, so a can that is genuinely too heavy is simply not selected, or
-is deliberately kept as one the hand will sometimes fail on. The one structural change applied to
-each asset is documented on :meth:`~isaaclab.utils.simready.SimReadyObjectLibrary.prepare`.
-
-The search phrases and bounds below describe *this* task: a table-top scene reachable by a Kuka arm
-with an Allegro hand. They live here rather than in
-:class:`~isaaclab.utils.simready.SimReadyObjectFilterCfg`, which carries no task defaults.
+Which assets those are is recorded in ``simready_objects.json`` beside this file. That record is
+committed, so every run spawns the same objects without contacting the search service. Delete it, or
+set :attr:`~isaaclab.utils.simready.SimReadyObjectLibraryCfg.always_query`, to pick up whatever the
+catalogue holds today.
 """
 
 from __future__ import annotations
 
-import isaaclab.sim as sim_utils
+import os
+
+from isaaclab.sim.spawners.wrappers import MultiUsdFileCfg
 from isaaclab.utils.configclass import configclass
 from isaaclab.utils.simready import SimReadyObjectFilterCfg, SimReadyObjectLibrary, SimReadyObjectLibraryCfg
 
@@ -60,54 +58,36 @@ TABLE_TOP_PHRASES = (
     "tin",
     "packet",
 )
-"""Phrases covering objects that belong on a table.
+"""Words that steer the catalogue toward the sort of thing found on a household table.
 
-The catalogue index ranks by appearance rather than by geometry, so no single phrase returns a shape
-class and coverage comes from the breadth of the phrasing instead.
+A theme rather than a requirement: whether the hand can pick an object up is decided by its size and
+mass, not by which word matched it. These need not be catalogue terms -- the index matches free text
+by appearance -- so extend or replace them to change the flavour of the scene.
 """
-
-NON_TABLE_TOP_PATH_FRAGMENTS = (
-    "Warehouse",
-    "Machines",
-    "Hardware",
-    "engineComponent",
-    "drivetrain",
-    "airSystem",
-    "coolingSystem",
-    "electricalSystem",
-    "fuelSystem",
-    "brakeSystem",
-    "exhaust",
-    "transmission",
-)
-"""Catalogue areas holding no table-top manipulables (heavy machine parts, vehicle assemblies)."""
 
 
 @configclass
 class DexsuiteKukaAllegroLiftSimReadyEnvCfg(DexsuiteKukaAllegroLiftEnvCfg):
     """Lift task spawning distinct SimReady catalogue objects instead of primitive shapes."""
 
-    num_objects: int = 100
-    """Number of distinct objects to spawn across the environments."""
-
     object_library: SimReadyObjectLibraryCfg = SimReadyObjectLibraryCfg(
+        num_objects=100,
+        resolution_path=os.path.join(os.path.dirname(__file__), "simready_objects.json"),
         object_filter=SimReadyObjectFilterCfg(
             search_phrases=TABLE_TOP_PHRASES,
-            excluded_path_fragments=NON_TABLE_TOP_PATH_FRAGMENTS,
-            # what the arm can reach around and the hand can close on
-            size_range=(0.02, 0.15),
-            # the upper bound is what the Allegro hand can hold; the catalogue's own spread across
-            # this range is what decides how often lifting is easy
-            mass_range=(0.005, 3.0),
-        )
+            # a kitchen has no use for engine components, however liftable they are
+            excluded_path_fragments=("Warehouse", "Machines", "Hardware"),
+            size_range=(0.02, 0.15),  # what this arm can reach around
+            mass_range=(0.005, 3.0),  # what this hand can hold
+            max_per_product_family=1,  # one banana, not four
+        ),
     )
-    """How the objects are searched for, filtered, and prepared."""
+    """Which catalogue objects this task spawns, and how they are resolved."""
 
     def __post_init__(self):
         super().__post_init__()
-        usd_paths = SimReadyObjectLibrary(self.object_library).resolve(self.num_objects)
-        self.scene.object.spawn = sim_utils.MultiUsdFileCfg(
-            usd_path=usd_paths,
+        self.scene.object.spawn = MultiUsdFileCfg(
+            usd_path=SimReadyObjectLibrary(self.object_library).resolve(),
             random_choice=False,  # one object per environment, so every asset is exercised
         )
         # distinct meshes cannot share a single physics replica, so each environment is built

@@ -1,6 +1,6 @@
 Added
 ^^^^^
 
-* Added :func:`~isaaclab.utils.assets.search_simready_usd_paths` to resolve USD asset paths from a
-  SimReady USD-Search semantic query. The required ``simready-search`` package is available through
-  the optional ``simready`` extra (``./isaaclab.sh -i simready``). A demo integrating the search
+* Added the optional ``simready`` extra, installing the ``simready-search`` package used to query the
+  SimReady USD-Search service (``./isaaclab.sh -i simready``). The extra is excluded from
+  ``./isaaclab.sh -i all`` because the service requires credentials on some deployments.
