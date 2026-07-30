@@ -294,6 +294,13 @@ class SimReadyObjectLibrary:
         selected = sorted(kept, key=lambda spec: (spec.mass is None, spec.mass))[: self.cfg.num_objects]
 
         logger.info("Selected %d of %d usable objects from %d candidates.", len(selected), len(kept), len(candidates))
+        if len(selected) < self.cfg.num_objects:
+            logger.warning(
+                "Asked for %d objects but only %d satisfy the filter. Widen size_range or mass_range,"
+                " add search phrases, or raise max_per_product_family to find more.",
+                self.cfg.num_objects,
+                len(selected),
+            )
         for reason, count in sorted(dropped.items(), key=lambda item: -item[1]):
             logger.info("Dropped %d candidates: %s.", count, reason)
         return selected
