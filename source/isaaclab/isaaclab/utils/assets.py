@@ -103,6 +103,18 @@ NEWTON_ASSET_DIR: str = os.environ.get("NEWTON_ASSET_DIR", NEWTON_ASSET_REPO_URL
 GIT_ASSET_CACHE_DIR: str = os.path.join(tempfile.gettempdir(), "asset_cache")
 """Default local directory where git asset repositories are cached."""
 
+SIMREADY_SEARCH_SERVICE_ENDPOINT = "https://search.simready.omniverse.nvidia.com/"
+"""Default SimReady USD-Search service endpoint.
+
+The credentials, when the deployment requires them, are read by the ``simready-search`` package from
+the ``USD_SEARCH_USERNAME`` and ``USD_SEARCH_PASSWORD`` environment variables, which must be set
+before the first search call.
+
+.. note::
+    A ``search.dev.<...>`` deployment also exists, but its asset index lags the production one and
+    returns stale results, so it is not a usable default.
+"""
+
 _GIT_SSH_RE = re.compile(r"^[^@/:]+@[^:]+:.+")
 
 
