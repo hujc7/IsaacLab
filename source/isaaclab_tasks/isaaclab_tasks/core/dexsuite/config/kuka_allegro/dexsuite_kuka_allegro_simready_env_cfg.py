@@ -71,7 +71,7 @@ class DexsuiteKukaAllegroLiftSimReadyEnvCfg(DexsuiteKukaAllegroLiftEnvCfg):
     """Lift task spawning distinct SimReady catalogue objects instead of primitive shapes."""
 
     object_library: SimReadyObjectLibraryCfg = SimReadyObjectLibraryCfg(
-        num_objects=100,
+        num_objects=99,
         resolution_path=os.path.join(os.path.dirname(__file__), "simready_objects.json"),
         object_filter=SimReadyObjectFilterCfg(
             search_phrases=TABLE_TOP_PHRASES,
@@ -79,7 +79,8 @@ class DexsuiteKukaAllegroLiftSimReadyEnvCfg(DexsuiteKukaAllegroLiftEnvCfg):
             excluded_path_fragments=("Warehouse", "Machines", "Hardware"),
             size_range=(0.02, 0.15),  # what this arm can reach around
             mass_range=(0.005, 3.0),  # what this hand can hold
-            max_per_product_family=1,  # one banana, not four
+            # no family cap: capping at one variant per product leaves 39 objects, and the wider
+            # set is worth more to training than the visual repetition costs
         ),
     )
     """Which catalogue objects this task spawns, and how they are resolved."""
