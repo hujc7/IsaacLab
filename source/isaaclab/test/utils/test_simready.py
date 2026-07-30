@@ -96,19 +96,7 @@ class TestRejectionReason:
 
 
 class TestObjectSpec:
-    """Product families group variants that differ only by a trailing code."""
-
-    @pytest.mark.parametrize(
-        "url, expected",
-        [
-            ("root/Golf_Ball/asset.usd", "golfball"),
-            ("root/Golf_Ball_A03/asset.usd", "golfball"),
-            ("root/Boxed_Drink_E01/asset.usd", "boxeddrink"),
-            ("root/Tomato_Soup_Can/asset.usd", "tomatosoupcan"),
-        ],
-    )
-    def test_family_strips_the_variant_code(self, url, expected):
-        assert make_spec(url).family == expected
+    """The measured spec exposes the extents the filter compares against."""
 
     def test_extents_report_the_largest_and_smallest_axis(self):
         spec = make_spec("a/Book/a.usd", dims=(0.2, 0.03, 0.14))
@@ -132,21 +120,6 @@ class TestSelect:
         library = make_library(tmp_path, specs, num_objects=3)
 
         assert len(library.select(candidates=[spec.url for spec in specs])) == 3
-
-    def test_a_product_family_cap_limits_near_identical_variants(self, tmp_path):
-        """Unique files are not visual variety: five golf balls still look like one object."""
-        specs = [make_spec(f"a/Golf_Ball_A0{i}/a.usd") for i in range(5)] + [make_spec("a/Pear/a.usd")]
-        library = make_library(tmp_path, specs, max_per_product_family=1)
-
-        selected = library.select(candidates=[spec.url for spec in specs])
-
-        assert sorted(spec.family for spec in selected) == ["golfball", "pear"]
-
-    def test_variants_are_kept_when_no_family_cap_is_set(self, tmp_path):
-        specs = [make_spec(f"a/Golf_Ball_A0{i}/a.usd") for i in range(5)]
-        library = make_library(tmp_path, specs)
-
-        assert len(library.select(candidates=[spec.url for spec in specs])) == 5
 
 
 class TestMeasurementCache:

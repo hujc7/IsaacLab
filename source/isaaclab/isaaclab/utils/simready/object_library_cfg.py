@@ -72,15 +72,6 @@ class SimReadyObjectFilterCfg:
     task objects and are a large share of the catalogue: 61 of 210 candidates in one table-top sweep.
     """
 
-    max_per_product_family: int | None = None
-    """How many variants of one product to keep, or ``None`` for no limit.
-
-    The catalogue ships near-identical variants (``Golf_Ball``, ``Golf_Ball_A01`` through ``A04``),
-    so a set of unique files can still look like one object repeated. Families are identified by
-    stripping trailing variant codes from the asset name, which is a naming convention rather than a
-    published property.
-    """
-
 
 @configclass
 class SimReadyObjectLibraryCfg:
