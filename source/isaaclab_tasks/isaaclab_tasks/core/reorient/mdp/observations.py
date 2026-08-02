@@ -12,12 +12,14 @@ from typing import TYPE_CHECKING
 import torch
 
 import isaaclab.utils.math as math_utils
-from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import ManagerTermBase, ObservationTermCfg, SceneEntityCfg
 
 if TYPE_CHECKING:
     from isaaclab.assets import RigidObject
     from isaaclab.envs import ManagerBasedRLEnv
+    from isaaclab.sensors import JointWrenchSensor
 
+    from .action_terms import ReorientEMAJointPositionToLimitsAction
     from .commands import ReorientCommand
 
 
@@ -25,6 +27,7 @@ CUBE_HALF_SIZE: tuple[float, float, float] = (0.03, 0.03, 0.03)
 """Half side lengths [m] of the reorientation cube."""
 
 
+# -- cube keypoint helpers, shared by the camera and state observation terms
 def _cube_corner_offsets(
     size: tuple[float, float, float], num_keypoints: int, device: torch.device | str
 ) -> torch.Tensor:
@@ -116,3 +119,122 @@ def goal_quat_diff(
     quat = math_utils.quat_mul(asset_quat_w, math_utils.quat_conjugate(goal_quat_w))
     # make sure the quaternion real-part is always positive
     return math_utils.quat_unique(quat) if make_quat_unique else quat
+
+
+# -- fingertip terms
+def fingertip_pos(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Return flattened fingertip positions in the environment frame.
+
+    Args:
+        env: Environment containing the robot.
+        asset_cfg: Robot scene entity with the fingertip bodies selected.
+
+    Returns:
+        Fingertip positions [m], shape ``(num_envs, num_fingertips * 3)``.
+    """
+    asset = env.scene[asset_cfg.name]
+    positions = asset.data.body_pos_w.torch[:, asset_cfg.body_ids] - env.scene.env_origins.unsqueeze(1)
+    return positions.reshape(env.num_envs, -1)
+
+
+def fingertip_quat(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Return flattened fingertip orientations.
+
+    Args:
+        env: Environment containing the robot.
+        asset_cfg: Robot scene entity with the fingertip bodies selected.
+
+    Returns:
+        Unit quaternions in ``(x, y, z, w)`` order, shape ``(num_envs, num_fingertips * 4)``.
+    """
+    asset = env.scene[asset_cfg.name]
+    return asset.data.body_quat_w.torch[:, asset_cfg.body_ids].reshape(env.num_envs, -1)
+
+
+def fingertip_vel(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Return flattened fingertip spatial velocities.
+
+    Args:
+        env: Environment containing the robot.
+        asset_cfg: Robot scene entity with the fingertip bodies selected.
+
+    Returns:
+        Linear and angular velocities [m/s, rad/s], shape ``(num_envs, num_fingertips * 6)``.
+    """
+    asset = env.scene[asset_cfg.name]
+    return asset.data.body_vel_w.torch[:, asset_cfg.body_ids].reshape(env.num_envs, -1)
+
+
+# -- action terms
+def reorient_last_action(env: ManagerBasedRLEnv, action_name: str) -> torch.Tensor:
+    """Return the Direct-compatible last action across same-step autoreset.
+
+    Args:
+        env: Environment containing the action term.
+        action_name: Action term whose raw action is observed.
+
+    Returns:
+        Normalized raw actions, retaining each terminal action in its same-step reset observation.
+    """
+    action_term: ReorientEMAJointPositionToLimitsAction = env.action_manager.get_term(action_name)
+    return action_term.observation_actions
+
+
+def openai_policy_observation(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    action_name: str,
+    robot_cfg: SceneEntityCfg,
+    object_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """Return the 42-dimensional actor observation from the OpenAI Shadow Hand task.
+
+    Args:
+        env: Environment containing the robot, object, command, and action term.
+        command_name: Command term used to extract the orientation goal.
+        action_name: Action term whose normalized raw action is observed.
+        robot_cfg: Robot scene entity with the fingertip bodies selected.
+        object_cfg: Object scene entity.
+
+    Returns:
+        Actor observations containing fingertip positions [m], object position [m],
+        orientation error as a unit quaternion, and normalized actions; shape ``(num_envs, 42)``.
+    """
+    object_asset: RigidObject = env.scene[object_cfg.name]
+    object_pos = object_asset.data.root_pos_w.torch - env.scene.env_origins
+    command_term: ReorientCommand = env.command_manager.get_term(command_name)
+    quat_error = math_utils.quat_mul(
+        object_asset.data.root_quat_w.torch, math_utils.quat_conjugate(command_term.quat_command_w)
+    )
+    return torch.cat(
+        (fingertip_pos(env, robot_cfg), object_pos, quat_error, reorient_last_action(env, action_name)), dim=-1
+    )
+
+
+class FingertipWrench(ManagerTermBase):
+    """Fingertip reaction wrenches [N, N·m] with a Direct-compatible zero fallback."""
+
+    def __init__(self, cfg: ObservationTermCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        body_ids = cfg.params["sensor_cfg"].body_ids
+        # Direct reports zeros until the sensor has produced its first sample.
+        self._zeros = torch.zeros(env.num_envs, len(body_ids) * 6, dtype=torch.float32, device=env.device)
+
+    def __call__(self, env: ManagerBasedRLEnv, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
+        """Return flattened fingertip reaction wrenches.
+
+        Args:
+            env: Environment containing the wrench sensor.
+            sensor_cfg: Joint-wrench sensor with the fingertip bodies selected.
+
+        Returns:
+            Forces and torques [N, N·m], shape ``(num_envs, num_fingertips * 6)``.
+        """
+        sensor: JointWrenchSensor = env.scene.sensors[sensor_cfg.name]
+        force_data = sensor.data.force
+        torque_data = sensor.data.torque
+        if force_data is None or torque_data is None:
+            return self._zeros
+        force = force_data.torch[:, sensor_cfg.body_ids]
+        torque = torque_data.torch[:, sensor_cfg.body_ids]
+        return torch.cat((force, torque), dim=-1).reshape(env.num_envs, -1)

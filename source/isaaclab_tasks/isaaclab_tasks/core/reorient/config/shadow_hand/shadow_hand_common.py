@@ -25,11 +25,22 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.configclass import configclass
 from isaaclab.utils.noise import GaussianNoiseCfg, NoiseModelWithAdditiveBiasCfg
 
+import isaaclab_tasks.core.reorient.mdp as reorient_mdp
 from isaaclab_tasks.utils import PresetCfg
 
 from isaaclab_assets.robots.shadow_hand import (
     SHADOW_HAND_CFG,
     SHADOW_HAND_NEWTON_CFG,
+)
+
+_SHADOW_HAND_MANAGER_RESET_EVENT_CFG = EventTerm(
+    func=reorient_mdp.reset_reorient_state,
+    mode="reset",
+    params={
+        "position_noise": 0.01,
+        "joint_position_noise": 0.2,
+        "joint_velocity_noise": 0.0,
+    },
 )
 
 
@@ -143,6 +154,33 @@ class ShadowHandEventCfg(PresetCfg):
     isaacsim_physx = physx
     newton_mjwarp = NewtonEventCfg()
     ovphysx = physx  # OvPhysX is PhysX-based; reuse the PhysX randomization terms
+    default = newton_mjwarp
+    newton_kamino = newton_mjwarp
+
+
+@configclass
+class ShadowHandManagerEventCfg:
+    """Manager reset event matching the state-based Direct task."""
+
+    reset_state = _SHADOW_HAND_MANAGER_RESET_EVENT_CFG
+
+
+@configclass
+class ShadowHandOpenAIEventCfg(PresetCfg):
+    """Backend-specific OpenAI randomization plus the manager reset event."""
+
+    @configclass
+    class PhysxCfg(PhysxEventCfg):
+        reset_state = _SHADOW_HAND_MANAGER_RESET_EVENT_CFG
+
+    @configclass
+    class NewtonCfg(NewtonEventCfg):
+        reset_state = _SHADOW_HAND_MANAGER_RESET_EVENT_CFG
+
+    physx = PhysxCfg()
+    isaacsim_physx = physx
+    newton_mjwarp = NewtonCfg()
+    ovphysx = physx
     default = newton_mjwarp
     newton_kamino = newton_mjwarp
 
