@@ -7,12 +7,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import torch
 
 import isaaclab.utils.math as math_utils
-from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import ManagerTermBase, RewardTermCfg, SceneEntityCfg
 
 if TYPE_CHECKING:
     from isaaclab.assets import RigidObject
@@ -22,30 +23,29 @@ if TYPE_CHECKING:
 
 
 def success_bonus(
-    env: ManagerBasedRLEnv, command_name: str, object_cfg: SceneEntityCfg = SceneEntityCfg("object")
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
 ) -> torch.Tensor:
-    """Bonus reward for successfully reaching the goal.
+    """Bonus reward for reaching the goal.
 
-    The object is considered to have reached the goal when the object orientation is within the threshold.
-    The reward is 1.0 if the object has reached the goal, otherwise 0.0.
+    The object has reached the goal when its orientation error is within the command
+    term's threshold. The reward is 1.0 on a reaching step and 0.0 otherwise.
 
     Args:
         env: The environment object.
         command_name: The command term to be used for extracting the goal.
-        object_cfg: The configuration for the scene entity. Default is "object".
+        object_cfg: The configuration for the scene entity. Defaults to the object.
+
+    Returns:
+        Per-environment goal-reaching flags.
     """
-    # extract useful elements
     asset: RigidObject = env.scene[object_cfg.name]
     command_term: ReorientCommand = env.command_manager.get_term(command_name)
-
-    # obtain the goal orientation
-    goal_quat_w = command_term.command[:, 3:7]
-    # obtain the threshold for the orientation error
-    threshold = command_term.cfg.orientation_success_threshold
-    # calculate the orientation error
-    dtheta = math_utils.quat_error_magnitude(asset.data.root_quat_w.torch, goal_quat_w)
-
-    return dtheta <= threshold
+    reached, _ = evaluate_reorient_success(
+        asset.data.root_quat_w.torch, command_term.quat_command_w, command_term.cfg.orientation_success_threshold
+    )
+    return reached
 
 
 def track_pos_l2(
@@ -192,3 +192,56 @@ def reorient_reward(
         consecutive_successes,
     )
     return reward, goal_resets, successes, consecutive_successes
+
+
+class ReorientSuccessBonus(ManagerTermBase):
+    """Goal-reaching bonus with pre-autoreset episode success tracking.
+
+    Reward terms run before same-step autoreset, while the command term runs after
+    it. This term therefore owns an episode goal counter that includes a goal
+    reached on the terminal step. The command keeps its independent count for
+    termination checks; combining the two lifecycle states would double-count the
+    last goal during an explicit reset.
+    """
+
+    def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):
+        """Initialize the reward term.
+
+        Args:
+            cfg: Reward term configuration.
+            env: Environment instance.
+        """
+        super().__init__(cfg, env)
+        self._goals_reached = torch.zeros(env.num_envs, device=env.device)
+
+    def reset(self, env_ids: Sequence[int] | None = None) -> None:
+        """Log and clear episode success for the reset environments.
+
+        Args:
+            env_ids: Environment indices to reset, or ``None`` for every environment.
+        """
+        reset_env_ids = slice(None) if env_ids is None else env_ids
+        command_term: ReorientCommand = self._env.command_manager.get_term(self.cfg.params["command_name"])
+        succeeded = self._goals_reached[reset_env_ids] >= command_term.cfg.success_count_threshold
+        self._env.extras.setdefault("log", {})["Metrics/success_rate"] = succeeded.float().mean().item()
+        self._goals_reached[reset_env_ids] = 0.0
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        command_name: str,
+        object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+    ) -> torch.Tensor:
+        """Compute the goal-reaching bonus and update episode success state.
+
+        Args:
+            env: Environment instance.
+            command_name: Command term used to extract the orientation goal.
+            object_cfg: Object scene entity configuration.
+
+        Returns:
+            Per-environment goal-reaching flags.
+        """
+        reached = success_bonus(env, command_name, object_cfg)
+        self._goals_reached.add_(reached)
+        return reached

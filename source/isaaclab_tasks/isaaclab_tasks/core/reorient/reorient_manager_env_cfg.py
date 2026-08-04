@@ -269,7 +269,7 @@ class RewardsCfg:
         params={"object_cfg": SceneEntityCfg("object"), "rot_eps": 0.1, "command_name": "object_pose"},
     )
     success_bonus = RewTerm(
-        func=mdp.success_bonus,
+        func=mdp.ReorientSuccessBonus,
         weight=250.0,
         params={"object_cfg": SceneEntityCfg("object"), "command_name": "object_pose"},
     )

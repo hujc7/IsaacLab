@@ -7,11 +7,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import torch
 
-from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import ManagerTermBase, SceneEntityCfg, TerminationTermCfg
+
+from .rewards import evaluate_reorient_success
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
@@ -85,3 +88,57 @@ def object_away_from_robot(
     dist = torch.linalg.norm(robot.data.root_pos_w.torch - object.data.root_pos_w.torch, dim=1)
 
     return dist > threshold
+
+
+class ReorientTimeout(ManagerTermBase):
+    """Time out an episode that has run its full length without reaching a goal.
+
+    The timer restarts on every goal reach, so episodes extend across success streaks.
+    This matches the OpenAI Direct variant, which is the only configuration that enables
+    the behavior. Pair it with :func:`max_consecutive_success` to also stop on the streak
+    cap, and declare both with ``time_out=True``.
+    """
+
+    def __init__(self, cfg: TerminationTermCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self._steps_since_success = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+
+    def reset(self, env_ids: Sequence[int] | None = None) -> None:
+        """Reset the per-environment timeout counters.
+
+        Args:
+            env_ids: Environment indices to reset, or ``None`` for every environment.
+        """
+        reset_env_ids = slice(None) if env_ids is None else env_ids
+        self._steps_since_success[reset_env_ids] = 0
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        command_name: str,
+        object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+    ) -> torch.Tensor:
+        """Return per-environment timeout flags.
+
+        Args:
+            env: The environment object.
+            command_name: The command term used to extract the orientation goal.
+            object_cfg: Object scene entity configuration.
+
+        Returns:
+            Per-environment timeout flags.
+        """
+        asset = env.scene[object_cfg.name]
+        command_term: ReorientCommand = env.command_manager.get_term(command_name)
+        # Terminations run before commands, whose metrics therefore still describe the
+        # previous step. Evaluate success here to match Direct's dones computation.
+        goal_reached, _ = evaluate_reorient_success(
+            asset.data.root_quat_w.torch,
+            command_term.quat_command_w,
+            command_term.cfg.orientation_success_threshold,
+        )
+        self._steps_since_success += 1
+        # masked_fill_ avoids the host synchronization caused by boolean indexing.
+        self._steps_since_success.masked_fill_(goal_reached, 0)
+
+        return self._steps_since_success >= env.max_episode_length - 1
