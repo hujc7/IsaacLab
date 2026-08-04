@@ -90,6 +90,9 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
 
 # Libraries ovrtx loads at init. GLVND splits these: libgl1 gives libGL.so.1,
 # but libOpenGL.so.0 and libEGL.so.1 need libopengl0 and libegl1.
+# libxi6, libxrandr2 and libxrender1 are dlopened by pyglet, which backs the
+# Newton viewer (`--visualizer newton`); the other images inherit them from the
+# Isaac Sim base image, but this one starts from a bare Ubuntu.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates \
@@ -103,6 +106,9 @@ RUN apt-get update \
       libvulkan1 \
       libx11-6 \
       libxext6 \
+      libxi6 \
+      libxrandr2 \
+      libxrender1 \
       python3 \
  && rm -rf /var/lib/apt/lists/* \
  && if getent passwd ubuntu >/dev/null; then userdel -r ubuntu; fi \
