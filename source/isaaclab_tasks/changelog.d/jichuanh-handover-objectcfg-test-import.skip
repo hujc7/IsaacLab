@@ -1,0 +1,2 @@
+Test-only: repointed the handover physics-preset test at ``BALL_CFG`` after the per-backend
+``ObjectCfg`` preset was collapsed into a single rigid-object config (no user-facing change).
