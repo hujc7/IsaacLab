@@ -37,6 +37,7 @@ __all__ = [
     "CRAZYFLIE_CFG",
     "RIDGEBACK_FRANKA_PANDA_CFG",
     "SAWYER_CFG",
+    "ShadowHand",
     "SHADOW_HAND_CFG",
     "SO101_CFG",
     "SO101_HIGH_PD_CFG",
@@ -94,7 +95,10 @@ from .pick_and_place import PICK_AND_PLACE_CFG
 from .quadcopter import CRAZYFLIE_CFG
 from .ridgeback_franka import RIDGEBACK_FRANKA_PANDA_CFG
 from .sawyer import SAWYER_CFG
-from .shadow_hand import SHADOW_HAND_CFG
+from .shadow_hand import (
+    SHADOW_HAND_CFG,
+    ShadowHand,
+)
 from .so101 import SO101_CFG, SO101_HIGH_PD_CFG
 from .spot import joint_parameter_lookup, SPOT_CFG
 from .unitree import (

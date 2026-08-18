@@ -3,210 +3,261 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Configuration for the dexterous hand from Shadow Robot.
+"""Configuration for the Shadow Robot Dexterous Hand.
 
-The following configurations are available:
-
-* :obj:`SHADOW_HAND_CFG`: Shadow Hand on the PhysX asset with implicit actuator model.
-* :obj:`SHADOW_HAND_NEWTON_CFG`: Shadow Hand on the Newton (MJWarp) asset.
+The hand has 24 physical joints and 20 motor coordinates. The middle and distal joints of each
+non-thumb finger (``J2`` and ``J1``) share one tendon motor, ``J0 = J1 + J2``; the remaining 16
+motors drive one joint each.
 
 Reference:
 
+* https://github.com/google-deepmind/mujoco_menagerie/tree/main/shadow_hand
 * https://www.shadowrobot.com/dexterous-hand-series/
 
 """
 
+import os
+
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
-##
-# Configuration
-##
-
-SHADOW_HAND_CFG = ArticulationCfg(
-    spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ISAAC_NUCLEUS_DIR}/Robots/ShadowRobot/ShadowHand/shadow_hand_instanceable.usd",
-        activate_contact_sensors=False,
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(
-            disable_gravity=True,
-            retain_accelerations=True,
-            max_depenetration_velocity=1000.0,
-        ),
-        articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            enabled_self_collisions=True,
-            solver_position_iteration_count=8,
-            solver_velocity_iteration_count=0,
-            sleep_threshold=0.005,
-            stabilization_threshold=0.0005,
-        ),
-        # collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
-        joint_drive_props=sim_utils.JointDrivePropertiesCfg(drive_type="force"),
-        fixed_tendons_props=sim_utils.FixedTendonPropertiesCfg(limit_stiffness=30.0, damping=0.1),
-    ),
-    init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.5),
-        rot=(0.0, -0.7071, 0.7071, 0.0),
-        joint_pos={".*": 0.0},
-    ),
-    actuators={
-        "fingers": ImplicitActuatorCfg(
-            joint_names_expr=["robot0_WR.*", "robot0_(FF|MF|RF|LF|TH)J(3|2|1)", "robot0_(LF|TH)J4", "robot0_THJ0"],
-            effort_limit_sim={
-                "robot0_WRJ1": 4.785,
-                "robot0_WRJ0": 2.175,
-                "robot0_(FF|MF|RF|LF)J1": 0.7245,
-                "robot0_FFJ(3|2)": 0.9,
-                "robot0_MFJ(3|2)": 0.9,
-                "robot0_RFJ(3|2)": 0.9,
-                "robot0_LFJ(4|3|2)": 0.9,
-                "robot0_THJ4": 2.3722,
-                "robot0_THJ3": 1.45,
-                "robot0_THJ(2|1)": 0.99,
-                "robot0_THJ0": 0.81,
-            },
-            stiffness={
-                "robot0_WRJ.*": 5.0,
-                "robot0_(FF|MF|RF|LF|TH)J(3|2|1)": 1.0,
-                "robot0_(LF|TH)J4": 1.0,
-                "robot0_THJ0": 1.0,
-            },
-            damping={
-                "robot0_WRJ.*": 0.5,
-                "robot0_(FF|MF|RF|LF|TH)J(3|2|1)": 0.1,
-                "robot0_(LF|TH)J4": 0.1,
-                "robot0_THJ0": 0.1,
-            },
-        ),
-    },
-    soft_joint_pos_limit_factor=1.0,
-)
-"""Configuration of the Shadow Hand robot on the PhysX asset."""
+from isaaclab_assets import ISAACLAB_ASSETS_DATA_DIR
 
 
-SHADOW_HAND_NEWTON_CFG = ArticulationCfg(
-    spawn=sim_utils.UsdFileCfg(
-        # Newton/MuJoCo use a separate USD schema; this asset renumbers the finger
-        # joints (+1) relative to the PhysX asset above (e.g. FFJ4 vs FFJ3, LFJ5 vs LFJ4).
-        usd_path=f"{ISAAC_NUCLEUS_DIR}/Robots/ShadowRobot/ShadowHandNewton/shadow_hand_instanceable.usda",
-        activate_contact_sensors=False,
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(
-            disable_gravity=True,
-            retain_accelerations=True,
-            max_depenetration_velocity=1000.0,
-        ),
-        articulation_props=sim_utils.ArticulationRootPropertiesCfg(enabled_self_collisions=True),
-        joint_drive_props=sim_utils.JointDrivePropertiesCfg(drive_type="force", ensure_drives_exist=True),
-        fixed_tendons_props=sim_utils.FixedTendonPropertiesCfg(damping=0.1),
-    ),
-    init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.5),
-        # WARNING(Octi): Newton's import_usd.py bakes the USD body xformOp rotation into
-        # joint_X_p for the root fixed joint, which cancels with the matching localPose1
-        # rotation in joint_X_c during FK (joint_X_p * inv(joint_X_c) ≈ identity). This
-        # discards the root body's native USD orientation, so we must re-apply it here as a
-        # spawn rotation. PhysX or USD does not have this issue. Remove once Newton fixes root joint
-        # transform handling in import_usd.py.
-        rot=(0.0, 0.0, -0.70710678118, 0.70710678118),
-        joint_pos={".*": 0.0},
-    ),
-    actuators={
-        # Drives the joints named by :obj:`SHADOW_ACTUATED_JOINT_NAMES`, which resolve on this
-        # asset despite its +1 finger renumbering.
+class ShadowHand:
+    """The Shadow Robot Dexterous Hand: its asset, its motors, its bodies and its configuration.
+
+    Everything a task needs to spawn or address this hand lives here, so a task takes one import.
+
+    One USD asset serves both physics engines and its ``Physics`` variant selects which. Where the
+    two engines' settings differ they do so because the engines differ, not the hardware -- see
+    :meth:`cfg`.
+    """
+
+    usd_path: str = os.environ.get(
+        "SHADOW_HAND_USD",
+        f"{ISAACLAB_ASSETS_DATA_DIR}/Mujoco_Menagerie/shadow_hand/right_hand/right_hand.usda",
+    )
+    """The asset. Its ``Physics`` USD variant selects the engine.
+
+    Defaults to the copy vendored in this package. TEMPORARY, until the fixed asset is published: the
+    ``physx`` variant needs the four PhysX tendon schemas the ``mujoco`` variant expresses as
+    ``MjcTendon`` prims, and a world weld PhysX honours -- MEASURED, the vendored copy gives
+    ``fixed_base=True joints=24 tendons=4`` where the published asset gives
+    ``fixed_base=False tendons=0``. Point this back at the published asset once it carries both;
+    ``SHADOW_HAND_USD`` overrides it meanwhile.
+    """
+
+    joint_ordering: str = "mjwarp"
+    """Public joint order, so both engines expose the hand's joints identically.
+
+    Left unset each backend uses its own enumeration order, and MEASURED they differ: Newton walks
+    depth-first per finger, PhysX breadth-first by joint level, so index 3 is ``rh_FFJ3`` on one and
+    ``rh_MFJ4`` on the other. Every observation past index 2 then names a different joint, and a policy
+    trained on one engine scores 0.0005 on the other against a 0.6165 native baseline.
+
+    ``"mjwarp"`` makes Newton's order the public one, so PhysX permutes to match rather than the other
+    way round. Actions were never affected -- the action terms resolve by name with
+    ``preserve_order`` -- so this only realigns the observations.
+    """
+
+    body_ordering: str = "mjwarp"
+    """Public body order, chosen to match :attr:`joint_ordering` for the same reason."""
+
+    articulation_root_prim_path: str = ""
+    """Which prim under the spawn path holds the articulation root.
+
+    Stated rather than searched for: the search demands exactly one prim with an articulation-root
+    API, and the asset's root link also carries ``NewtonArticulationRootAPI``, which satisfies the
+    same ``HasAPI`` check -- so the search finds two and raises.
+    """
+
+    joint_names: list[str] = [
+        "rh_WRJ2",
+        "rh_WRJ1",
+        "rh_FFJ4",
+        "rh_FFJ3",
+        "rh_MFJ4",
+        "rh_MFJ3",
+        "rh_RFJ4",
+        "rh_RFJ3",
+        "rh_LFJ5",
+        "rh_LFJ4",
+        "rh_LFJ3",
+        "rh_THJ5",
+        "rh_THJ4",
+        "rh_THJ3",
+        "rh_THJ2",
+        "rh_THJ1",
+    ]
+    """The 16 motors that drive a joint of their own [rad]."""
+
+    tendon_names: list[str] = ["rh_FFJ0", "rh_MFJ0", "rh_RFJ0", "rh_LFJ0"]
+    """The 4 motors that drive a tendon, one per non-thumb finger [rad].
+
+    A tendon spans that finger's middle and distal joints, which move together as ``J0 = J1 + J2``
+    and take no command of their own. Tendons have their own index space, so a joint action term
+    cannot reach them.
+    """
+
+    tendon_position_limits: tuple[float, float] = (0.0, 3.1415)
+    """Commandable range of each tendon motor [rad].
+
+    The asset's value: each tendon actuator authors ``mjc:ctrlRange:max = 3.1415``, which is pi to
+    four decimals. It is pi by construction rather than by choice -- the coordinate is
+    ``J0 = J1 + J2`` and each of those joints travels ``[0, pi/2]``, so their sum spans ``[0, pi]``.
+    That matches the hardware: the hand's middle and distal joints each move through 90 degrees on one
+    tendon.
+
+    Restated here because no *runtime* accessor reports it on both backends. The tendons carry no
+    position limit of their own -- MEASURED, ``mujoco.tendon_limited`` is ``2`` (MuJoCo's "auto") and
+    ``mujoco.tendon_range`` is all zeros -- so ``fixed_tendon_pos_limits`` reads zeros. What bounds
+    the command is the actuator's control range, which the MuJoCo backend exposes and PhysX does not.
+    """
+
+    fingertip_names: list[str] = [
+        "rh_ffdistal",
+        "rh_mfdistal",
+        "rh_rfdistal",
+        "rh_lfdistal",
+        "rh_thdistal",
+    ]
+    """Fingertip bodies, in the order the observation terms expect."""
+
+    _driven_motors = ImplicitActuatorCfg(
+        joint_names_expr=joint_names,
+        effort_limit_sim={
+            "rh_WRJ2": 10.0,
+            "rh_WRJ1": 5.0,
+            "rh_(FF|MF|RF)J(4|3)": 1.0,
+            "rh_LFJ(5|4|3)": 1.0,
+            "rh_THJ5": 3.0,
+            "rh_THJ4": 2.0,
+            "rh_THJ(3|2|1)": 1.0,
+        },
+        stiffness={
+            "rh_WRJ2": 10.0,
+            "rh_WRJ1": 8.0,
+            "rh_(FF|MF|RF)J(4|3)": 1.0,
+            "rh_LFJ(5|4|3)": 1.0,
+            "rh_THJ5": 0.4,
+            "rh_THJ4": 1.0,
+            "rh_THJ3": 0.5,
+            "rh_THJ2": 1.5,
+            "rh_THJ1": 1.0,
+        },
+        # Zeroing the damping on the grounds that the MuJoCo model supplies it is wrong for these
+        # joints: MEASURED, they end at damping 0.0 while only the tendon-coupled J1/J2 inherit the
+        # model's. A driven joint with stiffness and no damping is an undamped spring -- it rings
+        # rather than settles, and an object resting on it is flung.
+        damping={"rh_WRJ.*": 0.5, "rh_(FF|MF|RF|LF|TH)J.*": 0.1},
+        # The asset's own drivetrain values, restated because they do not survive import: the asset
+        # authors ``armature = 0.0002`` and ``frictionloss``/``jointFriction = 0.01`` in both its
+        # physx and mujoco payloads, but MEASURED, leaving these at None lands every joint at 0.0 --
+        # stiffness and damping do survive, armature and friction do not.
         #
-        # The per-finger ``J1``/``J2`` pair is coupled by a fixed tendon (``coef=[1, 1]``) that
-        # the MJWarp solver currently skips, so the configuration is what holds the pair
-        # together: both ends are driven with identical gains and effort limits, which
-        # reproduces the 1:1 coupling. Keep them symmetric and in the same actuator group --
-        # driving one end while clamping the other makes the two fight, and an uncapped effort
-        # limit on either end diverges to NaN within a few hundred steps.
-        #
-        # Known limitation: the ``J4`` knuckle abduction joints (and ``LFJ5``) are left
-        # undriven, so the fingers cannot spread laterally. Correcting that requires resolving
-        # the skipped tendon first and is deferred to a follow-up.
-        "fingers": ImplicitActuatorCfg(
-            joint_names_expr=[
-                "robot0_WR.*",
-                "robot0_(FF|MF|RF|LF|TH)J(3|2|1)",
-                "robot0_(LF|TH)J4",
-                "robot0_THJ0",
-            ],
-            effort_limit_sim={
-                "robot0_WRJ1": 4.785,
-                "robot0_WRJ0": 2.175,
-                "robot0_(FF|MF|RF|LF)J1": 0.7245,
-                "robot0_FFJ(3|2)": 0.9,
-                "robot0_MFJ(3|2)": 0.9,
-                "robot0_RFJ(3|2)": 0.9,
-                "robot0_LFJ(4|3|2)": 0.9,
-                "robot0_THJ4": 2.3722,
-                "robot0_THJ3": 1.45,
-                "robot0_THJ(2|1)": 0.99,
-                "robot0_THJ0": 0.81,
-            },
-            # Default gains match the PhysX cfg (wrists 5.0/0.5, fingers 1.0/0.1). Tasks that
-            # need more joint authority override these -- e.g. the handover catch on MJWarp
-            # raises them to 20.0/2.0, since MJWarp's implicit-PD path lacks PhysX's
-            # fixed-tendon limit stiffness + solver-iteration torque amplification.
-            stiffness={
-                "robot0_WRJ.*": 5.0,
-                "robot0_(FF|MF|RF|LF|TH)J(3|2|1)": 1.0,
-                "robot0_(LF|TH)J4": 1.0,
-                "robot0_THJ0": 1.0,
-            },
-            damping={
-                "robot0_WRJ.*": 0.5,
-                "robot0_(FF|MF|RF|LF|TH)J(3|2|1)": 0.1,
-                "robot0_(LF|TH)J4": 0.1,
-                "robot0_THJ0": 0.1,
-            },
-            friction=1e-2,
-            armature=2e-3,
-        ),
-    },
-    soft_joint_pos_limit_factor=1.0,
-)
-"""Configuration of the Shadow Hand robot on the Newton (MJWarp) asset.
+        # An earlier revision forced ``armature = 2e-3``, the value the PREVIOUS asset's
+        # configuration used. That is ten times what this asset describes and reads as a heavier,
+        # slower hand.
+        armature=2.0e-4,
+        friction=1.0e-2,
+    )
 
-The Newton USD renumbers the finger joints (+1) relative to :obj:`SHADOW_HAND_CFG`, but the
-names in :obj:`SHADOW_ACTUATED_JOINT_NAMES` resolve on both assets, so the two backends share
-one actuated-joint list. Gains default to the PhysX values; tasks override them as needed.
-"""
+    _coupled_joints = ImplicitActuatorCfg(
+        joint_names_expr=["rh_(FF|MF|RF|LF)J(2|1)"],
+        # Bound what the tendon can apply. MEASURED, leaving this unset lands these eight joints at
+        # 3.4e38 -- float max -- while every directly driven joint gets 1 to 10 N-m. They are exactly
+        # the joints the tendon pulls, so an unbounded torque there is a route to a diverging
+        # velocity under contact. A PhysX fixed tendon has no force-range field of its own, so the
+        # joint's effort limit is the only place the model's cap can live: the MuJoCo payload caps
+        # each tendon actuator at ``mjc:forceRange`` +/-1, and the previous PhysX Shadow Hand gave
+        # these same physical joints 0.9 and 0.7245.
+        effort_limit_sim={
+            "rh_(FF|MF|RF|LF)J2": 0.9,
+            "rh_(FF|MF|RF|LF)J1": 0.7245,
+        },
+        # These take no position command -- the tendon drives them -- so their stiffness and damping
+        # stay as the model authored them, which does survive import (None keeps the USD value).
+        # Armature and friction do not survive, so they are restated from the asset as above.
+        stiffness=None,
+        damping=None,
+        armature=2.0e-4,
+        friction=1.0e-2,
+    )
+
+    @classmethod
+    def cfg(cls, physics: str = "mujoco") -> ArticulationCfg:
+        """Return the hand's configuration for one physics engine.
+
+        The engine is selected by the asset's ``Physics`` USD variant. Everything else is shared
+        except where the engines genuinely differ: the tendon gains, which each engine expresses in
+        its own units, and the solver settings, which have no cross-engine meaning. The spawn pose
+        is shared -- see :attr:`cfg`'s ``init_state`` for why this asset needs no per-engine
+        rotation, unlike the pair of assets it replaces.
+
+        Args:
+            physics: ``"mujoco"`` for the Newton (MJWarp) solver, or ``"physx"`` for PhysX.
+
+        Returns:
+            The configuration, with that variant and that engine's settings selected.
+        """
+        base = ArticulationCfg(
+            spawn=sim_utils.UsdFileCfg(
+                usd_path=cls.usd_path,
+                variants={"Physics": physics},
+                activate_contact_sensors=False,
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                    disable_gravity=True,
+                    retain_accelerations=True,
+                    max_depenetration_velocity=1000.0,
+                ),
+                articulation_props=sim_utils.ArticulationRootPropertiesCfg(enabled_self_collisions=True),
+                joint_drive_props=sim_utils.JointDrivePropertiesCfg(drive_type="force"),
+            ),
+            init_state=ArticulationCfg.InitialStateCfg(
+                pos=(0.0, 0.0, 0.5),
+                # Newton's importer bakes the root body's xformOp rotation into the root joint and
+                # cancels it during FK, so the orientation is re-applied here. Same value and same
+                # reason as the previous Newton asset, which trains this task to 0.926 success.
+                #
+                # MEASURED: of all 24 axis-aligned orientations scored by fingertip distance from
+                # that asset's imported pose, this one is 33 mm away and every other is 545-615 mm.
+                #
+                # Both engines take this one rotation. The asset pair this replaces needed two,
+                # because the PhysX asset baked a root orientation that the Newton one did not;
+                # this asset bakes none, so re-applying it here is right for either engine.
+                # MEASURED: the palm lands at the same env-local (0.0, -0.247, 0.51) on both.
+                rot=(0.0, 0.0, -0.70710678118, 0.70710678118),
+                joint_pos={".*": 0.0},
+            ),
+            articulation_root_prim_path=cls.articulation_root_prim_path,
+            joint_ordering=cls.joint_ordering,
+            body_ordering=cls.body_ordering,
+            actuators={"direct_motors": cls._driven_motors, "coupled_joints": cls._coupled_joints},
+            soft_joint_pos_limit_factor=1.0,
+        )
+        if physics == "mujoco":
+            return base
+        return base.replace(
+            spawn=base.spawn.replace(
+                articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+                    enabled_self_collisions=True,
+                    solver_position_iteration_count=8,
+                    solver_velocity_iteration_count=0,
+                    sleep_threshold=0.005,
+                    stabilization_threshold=0.0005,
+                ),
+                # No fixed_tendons_props here: the asset's physx variant carries each tendon's
+                # gains, so restating them would let the config and the asset drift apart.
+            ),
+        )
 
 
-SHADOW_FINGERTIP_BODY_NAMES: list[str] = [
-    "robot0_ffdistal",
-    "robot0_mfdistal",
-    "robot0_rfdistal",
-    "robot0_lfdistal",
-    "robot0_thdistal",
-]
-"""Shadow Hand fingertip body names (identical on every backend asset)."""
+SHADOW_HAND_CFG = ShadowHand.cfg("physx")
+"""Shadow Hand on the asset's PhysX variant.
 
-SHADOW_ACTUATED_JOINT_NAMES: list[str] = [
-    "robot0_WRJ1",
-    "robot0_WRJ0",
-    "robot0_FFJ3",
-    "robot0_FFJ2",
-    "robot0_FFJ1",
-    "robot0_MFJ3",
-    "robot0_MFJ2",
-    "robot0_MFJ1",
-    "robot0_RFJ3",
-    "robot0_RFJ2",
-    "robot0_RFJ1",
-    "robot0_LFJ4",
-    "robot0_LFJ3",
-    "robot0_LFJ2",
-    "robot0_LFJ1",
-    "robot0_THJ4",
-    "robot0_THJ3",
-    "robot0_THJ2",
-    "robot0_THJ1",
-    "robot0_THJ0",
-]
-"""Shadow Hand actuated joint names, in the Direct task's actuation order.
-
-These names resolve on both the PhysX and Newton assets, so every backend shares this list.
+Deprecated: call :meth:`ShadowHand.cfg` with the engine's variant instead, which names the engine at
+the call site and covers every variant rather than only this one. Kept because this symbol is
+exported from the package root and removing it would break callers outside the repository.
 """
