@@ -98,9 +98,9 @@ def _tune_multi_instance_tendon(cfg, prim_path: str, stage: Usd.Stage | None, ma
     *tune-not-apply* (instances are authored in the source asset) and are typically applied on the
     descendant joint prims rather than the ``prim_path`` the spawner targets, so this descends the
     whole subtree (matching the legacy ``apply_nested`` traversal) and writes each set fragment field
-    as ``<schema_name>:<camelCase(field)>`` on every prim carrying a matching instance. Applies no
-    schema. The fragment's ``_usd_namespace`` is unused (these are not flat-namespace fragments); the
-    schema marker is matched explicitly via ``markers``.
+    as ``physxTendon:<instance>:<camelCase(field)>`` on every prim carrying a matching instance.
+    Applies no schema. The fragment's ``_usd_namespace`` is unused (these are not flat-namespace
+    fragments); the schema marker is matched explicitly via ``markers``.
 
     Args:
         cfg: The tendon fragment whose set fields are written.
@@ -126,9 +126,15 @@ def _tune_multi_instance_tendon(cfg, prim_path: str, stage: Usd.Stage | None, ma
         for schema_name in applied_schemas:
             if not any(m in schema_name for m in markers):
                 continue
+            # multi-apply schemas are always "<Schema>:<instance>"; skip anything else rather than
+            # indexing past the end.
+            _, sep, instance_name = schema_name.partition(":")
+            if not sep:
+                continue
+            attr_prefix = f"physxTendon:{instance_name}"
             for attr_name, value in values.items():
                 safe_set_attribute_on_usd_prim(
-                    prim, f"{schema_name}:{to_camel_case(attr_name, 'cC')}", value, camel_case=False
+                    prim, f"{attr_prefix}:{to_camel_case(attr_name, 'cC')}", value, camel_case=False
                 )
     return found
 
@@ -138,9 +144,9 @@ def apply_fixed_tendon(cfg: PhysxFixedTendonCfg, prim_path: str, stage: Usd.Stag
 
     Custom ``func`` override for :class:`PhysxFixedTendonCfg`. The fixed-tendon schema is
     multi-instance and *tune-not-apply* (instances are authored in the source asset), so this
-    writes each set fragment field as ``<schema_name>:<camelCase(field)>`` across every applied
-    ``PhysxTendonAxisRootAPI`` instance and applies no schema. Writes nothing for the ``mjc:``
-    Mujoco path — a separate ``MjcTendon``-aware Newton fragment handles that path.
+    writes each set fragment field under the ``physxTendon:<instance>`` property namespace across
+    every applied ``PhysxTendonAxisRootAPI`` instance and applies no schema. Writes nothing for the
+    ``mjc:`` Mujoco path — a separate ``MjcTendon``-aware Newton fragment handles that path.
 
     Args:
         cfg: The :class:`PhysxFixedTendonCfg` fragment to apply.

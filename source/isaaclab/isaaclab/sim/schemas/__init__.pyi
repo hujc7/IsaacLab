@@ -2,7 +2,6 @@
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
-
 __all__ = [
     "MESH_APPROXIMATION_TOKENS",
     "PHYSX_MESH_COLLISION_CFGS",
@@ -36,6 +35,7 @@ __all__ = [
     "modify_mesh_collision_properties",
     "modify_rigid_body_properties",
     "modify_spatial_tendon_properties",
+    "resolve_applied_schema_instances",
     "ArticulationRootBaseCfg",
     "BoundingCubePropertiesCfg",
     "BoundingSpherePropertiesCfg",
@@ -103,6 +103,7 @@ from .schemas import (
     modify_mesh_collision_properties,
     modify_rigid_body_properties,
     modify_spatial_tendon_properties,
+    resolve_applied_schema_instances,
 )
 from .schemas_actuators import (
     define_actuator_properties,

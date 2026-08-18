@@ -1562,6 +1562,26 @@ Fixed tendon properties.
 """
 
 
+def resolve_applied_schema_instances(applied_schemas, schema_name: str) -> list[str]:
+    """Return the instance names of a multi-apply schema applied to a prim.
+
+    A multi-apply schema is applied as ``<SchemaName>:<instance>``, and the instance -- not the
+    prim it sits on -- is the entity's identity. Fixed tendons are the motivating case: naming one
+    after the joint prim carrying its root gives the same tendon a different name on each physics
+    engine, and collapses several tendons on one prim into a single entry.
+
+    Args:
+        applied_schemas: The prim's applied API schemas, as returned by ``GetAppliedSchemas()``.
+        schema_name: The multi-apply schema to match, without an instance (e.g.
+            ``"PhysxTendonAxisRootAPI"``).
+
+    Returns:
+        The instance names, in the order the prim declares them. Empty if the schema is not applied.
+    """
+    prefix = f"{schema_name}:"
+    return [str(name).removeprefix(prefix) for name in applied_schemas if str(name).startswith(prefix)]
+
+
 def apply_fixed_tendon_properties(
     prim_path: str, fragments: Iterable[schemas_cfg.FixedTendonFragment], stage: Usd.Stage | None = None
 ) -> bool:
@@ -1650,17 +1670,28 @@ def modify_fixed_tendon_properties(
     if not any("PhysxTendonAxisRootAPI" in s for s in applied_schemas) and prim_type != "MjcTendon":
         return False
 
+    # FIXME: the schema -> property-namespace correspondence is hard-coded per branch below
+    # ("physxTendon", "mjc"). Every other schema family declares it once as
+    # ``SchemaFragment._usd_namespace`` and a generic writer reads it; tendons opt out because they
+    # are multi-apply and the instance has to be interpolated into the property name. A third
+    # tendon backend, or a second property namespace on an existing one, would need another branch
+    # here. Folding multi-apply into the ``_usd_namespace`` mechanism removes this whole function.
     # resolve all available instances of the schema since it is multi-instance
     cfg = cfg.to_dict()
     if prim_type != "MjcTendon":
         for schema_name in applied_schemas:
             if "PhysxTendonAxisRootAPI" not in schema_name:
                 continue
-            # set into PhysX API by attribute prefix schema_name: (e.g. PhysxTendonAxisRootAPI:default:stiffness)
+            # multi-apply schemas are always "<Schema>:<instance>"; skip anything else rather than
+            # indexing past the end.
+            _, sep, instance_name = schema_name.partition(":")
+            if not sep:
+                continue
+            attr_prefix = f"physxTendon:{instance_name}"
             for attr_name, value in cfg.items():
                 safe_set_attribute_on_usd_prim(
                     tendon_prim,
-                    f"{schema_name}:{to_camel_case(attr_name, 'cC')}",
+                    f"{attr_prefix}:{to_camel_case(attr_name, 'cC')}",
                     value,
                     camel_case=False,
                 )
@@ -1777,10 +1808,16 @@ def modify_spatial_tendon_properties(
     for schema_name in applied_schemas:
         if "PhysxTendonAttachmentRootAPI" not in schema_name and "PhysxTendonAttachmentLeafAPI" not in schema_name:
             continue
+        # multi-apply schemas are always "<Schema>:<instance>"; skip anything else rather than
+        # indexing past the end.
+        _, sep, instance_name = schema_name.partition(":")
+        if not sep:
+            continue
+        attr_prefix = f"physxTendon:{instance_name}"
         for attr_name, value in cfg.items():
             safe_set_attribute_on_usd_prim(
                 tendon_prim,
-                f"{schema_name}:{to_camel_case(attr_name, 'cC')}",
+                f"{attr_prefix}:{to_camel_case(attr_name, 'cC')}",
                 value,
                 camel_case=False,
             )
