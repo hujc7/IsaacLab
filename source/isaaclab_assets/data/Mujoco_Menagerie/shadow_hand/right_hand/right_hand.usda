@@ -1,0 +1,51 @@
+#usda 1.0
+(
+    customLayerData = {
+        string creator = "MuJoCo USD Converter v0.2.0"
+    }
+    defaultPrim = "right_shadow_hand"
+    doc = """Generated from Composed Stage of root layer /tmp/tmp_z5h90qd/right_shadow_hand.usdc
+
+
+Generated from Composed Stage of root layer /tmp/mjcf_import_right_hand_47vz4h36/usdex_right_hand/right_shadow_hand.usdc
+
+
+Generated from Composed Stage of root layer /tmp/mjcf_import_right_hand_47vz4h36/temp_right_hand/right_hand.usd
+
+
+Generated from Composed Stage of root layer /home/stevfeng/Desktop/Mujoco_Menagerie/usd_robots/shadow_hand/right_hand/payloads/base.usd
+"""
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "right_shadow_hand" (
+    prepend references = @./payloads/base.usda@
+    variants = {
+        string Physics = "physx"
+    }
+    append variantSets = "Physics"
+)
+{
+    variantSet "Physics" = {
+        "mujoco" (
+            prepend payload = @./payloads/Physics/mujoco.usda@
+        ) {
+
+        }
+        "none" {
+
+        }
+        "physics" (
+            prepend payload = @./payloads/Physics/physics.usda@
+        ) {
+
+        }
+        "physx" (
+            prepend payload = @./payloads/Physics/physx.usda@
+        ) {
+
+        }
+    }
+}
