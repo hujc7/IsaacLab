@@ -3486,6 +3486,36 @@ class Articulation(BaseArticulation):
             TT.FIXED_TENDON_REST_LENGTH, self._data._fixed_tendon_rest_length.data, mask=env_mask_wp
         )
 
+    def set_fixed_tendon_position_target_index(
+        self,
+        *,
+        target: float | torch.Tensor | wp.array,
+        fixed_tendon_ids: Sequence[int] | torch.Tensor | wp.array | None = None,
+        env_ids: Sequence[int] | torch.Tensor | wp.array | None = None,
+    ) -> None:
+        """Command the tendon's length by shifting its offset.
+
+        OVPhysX carries the same tendon model as PhysX, where the schema documents ``offset`` as the
+        value "added to the accumulated length ... allows the application to actuate the tendon by
+        shortening or lengthening it", so a target length is applied as its negation.
+
+        .. note::
+            This method expects partial data.
+
+        Args:
+            target: Target tendon length [m or rad, depending on the spanned joints' type].
+                Shape is (len(env_ids), len(fixed_tendon_ids)).
+            fixed_tendon_ids: The tendon indices to command. Defaults to None (all fixed tendons).
+            env_ids: The environment indices to command. Defaults to None (all environments).
+        """
+        if isinstance(target, torch.Tensor):
+            offset = -target
+        elif isinstance(target, (int, float)):
+            offset = -float(target)
+        else:
+            offset = -wp.to_torch(target)
+        self.set_fixed_tendon_offset_index(offset=offset, fixed_tendon_ids=fixed_tendon_ids, env_ids=env_ids)
+
     def set_fixed_tendon_offset_index(
         self,
         *,
@@ -4095,12 +4125,9 @@ class Articulation(BaseArticulation):
         if self.cfg.articulation_root_prim_path is not None:
             root_prim_path_expr = self.cfg.prim_path + self.cfg.articulation_root_prim_path
         else:
-
-            def has_articulation_root_api(prim) -> bool:
-                return bool(prim.HasAPI(UsdPhysics.ArticulationRootAPI))
-
-            resolve_kwargs = {"predicate": has_articulation_root_api, "expected_num_matches": 1}
-            root_matches = sim_utils.resolve_matching_prims_from_source(self.cfg.prim_path, **resolve_kwargs)
+            root_matches = sim_utils.resolve_articulation_root_prims_from_source(
+                self.cfg.prim_path, expected_num_matches=1
+            )
             _, root_prim_path_expr = root_matches[0]
         # Validate the prim exists on the live stage -- ``create_tensor_binding`` silently
         # returns a 0-count binding when the pattern matches nothing, surfacing as obscure
