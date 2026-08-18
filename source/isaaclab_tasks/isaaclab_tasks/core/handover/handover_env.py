@@ -57,6 +57,23 @@ class HandoverEnv(DirectMARLEnv):
                 f"Expected {len(cfg.actuated_joint_names)} actuated joints, found {len(self.actuated_dof_indices)}."
             )
 
+        # Motors that pull a tendon rather than drive a joint. Both hands are the same model, so
+        # one index set serves both.
+        self.actuated_tendon_indices: list[int] = []
+        if cfg.actuated_tendon_names:
+            self.actuated_tendon_indices, _ = self.right_hand.find_fixed_tendons(
+                cfg.actuated_tendon_names, preserve_order=True
+            )
+            if len(self.actuated_tendon_indices) != len(cfg.actuated_tendon_names):
+                raise ValueError(
+                    f"Expected {len(cfg.actuated_tendon_names)} actuated tendons, found"
+                    f" {len(self.actuated_tendon_indices)}."
+                )
+            tendon_shape = (self.num_envs, len(self.actuated_tendon_indices))
+            lower, upper = cfg.actuated_tendon_position_limits
+            self.tendon_lower_limits = torch.full(tendon_shape, lower, device=self.device)
+            self.tendon_upper_limits = torch.full(tendon_shape, upper, device=self.device)
+
         # finger bodies
         self.finger_bodies, _ = self.right_hand.find_bodies(self.cfg.fingertip_body_names)
         if len(self.finger_bodies) != len(self.cfg.fingertip_body_names):
@@ -90,10 +107,20 @@ class HandoverEnv(DirectMARLEnv):
         self.y_unit_tensor = torch.tensor([0, 1, 0], dtype=torch.float, device=self.device).repeat((self.num_envs, 1))
 
     def _setup_scene(self):
+        # WORKAROUND, cause not yet identified. ``{ENV_REGEX_NS}`` is an Isaac Lab cfg macro, and
+        # ``AssetBase.__init__`` expands it unconditionally for exactly this case -- an asset a direct
+        # environment builds itself. Via ``parse_env_cfg`` that holds: these assets construct with no
+        # help here. But MEASURED, the training entry point still reaches the spawner with the macro
+        # intact: 4 "is not global" errors and 0 learning iterations without these two lines.
+        # Ruled out: the preset resolves to a plain ArticulationCfg before construction, so the
+        # ``PresetCfg`` wrapper is not the difference. Remove this once the real cause is found.
+        def _at_env_ns(cfg):
+            return cfg.replace(prim_path=cfg.prim_path.replace("{ENV_REGEX_NS}", self.scene.env_regex_ns))
+
         # add hand, in-hand object, and goal object
-        self.right_hand = Articulation(self.cfg.right_robot_cfg)
-        self.left_hand = Articulation(self.cfg.left_robot_cfg)
-        self.object = RigidObject(self.cfg.object_cfg)
+        self.right_hand = Articulation(_at_env_ns(self.cfg.right_robot_cfg))
+        self.left_hand = Articulation(_at_env_ns(self.cfg.left_robot_cfg))
+        self.object = RigidObject(_at_env_ns(self.cfg.object_cfg))
         # add ground plane
         spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
         src, dest = "/World/envs/env_0", "/World/envs/env_{}"
@@ -127,22 +154,34 @@ class HandoverEnv(DirectMARLEnv):
         curr_targets: torch.Tensor,
         prev_targets: torch.Tensor,
     ) -> None:
-        """Map one agent's actions to joint position targets and write them to its hand.
+        """Map one agent's actions to position targets and write them to its hand.
 
-        The raw ``[-1, 1]`` action is rescaled to the joint limits, blended with the previous
-        target via the exponential moving average, clamped to the limits, and set on the hand.
+        Actions are ordered joints first, then tendons, matching the manager task's action term.
+        Each raw ``[-1, 1]`` joint action is rescaled to the joint limits, blended with the
+        previous target via the exponential moving average, clamped to the limits, and set on the
+        hand. Tendon actions are rescaled to the tendon's commandable range and written directly.
         """
         idx = self.actuated_dof_indices
         lower = self.hand_dof_lower_limits[:, idx]
         upper = self.hand_dof_upper_limits[:, idx]
 
-        targets = unscale_transform(self.actions[agent], lower, upper)
+        targets = unscale_transform(self.actions[agent][:, : len(idx)], lower, upper)
         targets = self.cfg.act_moving_average * targets + (1.0 - self.cfg.act_moving_average) * prev_targets[:, idx]
         targets = saturate(targets, lower, upper)
 
         curr_targets[:, idx] = targets
         prev_targets[:, idx] = targets
         hand.set_joint_position_target_index(target=targets, joint_ids=idx)
+
+        if self.actuated_tendon_indices:
+            # No moving average on the tendon target: the manager task's action term applies none,
+            # and the two task variants have to stay comparable.
+            hand.set_fixed_tendon_position_target_index(
+                target=unscale_transform(
+                    self.actions[agent][:, len(idx) :], self.tendon_lower_limits, self.tendon_upper_limits
+                ),
+                fixed_tendon_ids=self.actuated_tendon_indices,
+            )
 
     def _hand_proprio_obs(self, agent: str) -> torch.Tensor:
         """Per-hand proprioceptive observation block for ``agent`` (133 dims).
@@ -215,7 +254,14 @@ class HandoverEnv(DirectMARLEnv):
         # Sticky per-env success: True once the object reached the goal within threshold.
         self._episode_succeeded |= succeeded
 
-        return {"right_hand": rew_dist, "left_hand": rew_dist}
+        # Each hand pays for its own actions. Without this the released hand's pose no longer
+        # affects the shared distance term, so nothing bounds how far it drives its motors.
+        penalties = {
+            agent: self.actions[agent].square().sum(dim=-1) * self.cfg.action_penalty_scale
+            for agent in self.cfg.possible_agents
+        }
+        self.extras["log"]["action_penalty"] = torch.stack(list(penalties.values())).mean()
+        return {agent: rew_dist + penalties[agent] for agent in self.cfg.possible_agents}
 
     def _get_dones(self) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         self._compute_intermediate_values()

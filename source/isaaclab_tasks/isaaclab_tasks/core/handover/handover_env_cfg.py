@@ -9,25 +9,23 @@ from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
 
 import isaaclab.sim as sim_utils
-import isaaclab.utils.math as math_utils
-from isaaclab.assets import ArticulationCfg, RigidObjectCfg
+from isaaclab.assets import RigidObjectCfg
 from isaaclab.envs import DirectMARLEnvCfg
 from isaaclab.markers import VisualizationMarkersCfg
 from isaaclab.physics import PhysxAutoCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.sim.spawners.materials import RigidBodyMaterialBaseCfg
+from isaaclab.utils import math as math_utils
 from isaaclab.utils.configclass import configclass
+from isaaclab.visualizers import VisualizerCfg
 
-from isaaclab_tasks.core.handover.handover_common import (
-    ACTUATED_JOINT_NAMES,
-    FINGERTIP_BODY_NAMES,
-    GOAL_MARKER_CFG,
-    OBJECT_RADIUS,
-)
+from isaaclab_tasks.core.handover.handover_common import GOAL_MARKER_CFG, OBJECT_RADIUS
 from isaaclab_tasks.utils import PresetCfg, preset
 
-from isaaclab_assets.robots.shadow_hand import SHADOW_HAND_CFG, SHADOW_HAND_NEWTON_CFG
+from isaaclab_assets.robots.shadow_hand import (
+    ShadowHand,
+)
 
 
 def _shadow_hand_cfg(
@@ -37,51 +35,58 @@ def _shadow_hand_cfg(
 ) -> PresetCfg:
     """Build the per-hand Shadow Hand preset for each supported backend.
 
+    Every engine gets the same hand at the same pose with the same gains; only the asset's
+    ``Physics`` USD variant differs, and that is carried by the asset configuration itself. The
+    catch needs more joint authority than reorientation, so the motor gains are raised here for
+    both hands alike.
+
     Args:
         prim_path: Scene path the hand spawns at.
         init_pos: Spawn position [m].
         init_rot: Spawn orientation as ``(w, x, y, z)``.
 
     Returns:
-        A preset carrying the PhysX, Newton MJWarp and OvPhysX variants, each at
-        *prim_path* with the given pose. The two hands differ only in these arguments.
+        A preset carrying each engine's variant, all at *prim_path* with the given pose. The two
+        hands differ only in these arguments.
     """
-    physx_cfg = SHADOW_HAND_CFG.replace(prim_path=prim_path).replace(
-        init_state=ArticulationCfg.InitialStateCfg(pos=init_pos, rot=init_rot, joint_pos={".*": 0.0})
-    )
-    # Newton's importer bakes the asset's root orientation into the root joint (see the note on
-    # SHADOW_HAND_NEWTON_CFG.init_state), so the task rotation must compose with it rather than
-    # replace it — replacing leaves both palms rotated 90 degrees.
-    newton_rot = tuple(
-        math_utils.quat_mul(
-            torch.tensor(init_rot, dtype=torch.float64),
-            torch.tensor(SHADOW_HAND_NEWTON_CFG.init_state.rot, dtype=torch.float64),
-        ).tolist()
-    )
-    newton_mjwarp_cfg = SHADOW_HAND_NEWTON_CFG.replace(
-        prim_path=prim_path,
-        init_state=SHADOW_HAND_NEWTON_CFG.init_state.replace(pos=init_pos, rot=newton_rot),
-        actuators={
-            **SHADOW_HAND_NEWTON_CFG.actuators,
-            "fingers": SHADOW_HAND_NEWTON_CFG.actuators["fingers"].replace(stiffness=20.0, damping=2.0),
-        },
-    )
-    ovphysx_cfg = SHADOW_HAND_CFG.replace(
-        prim_path=prim_path,
-        # OVPhysX does not expose the fixed-tendon runtime API, so spawn without tendon overrides.
-        spawn=SHADOW_HAND_CFG.spawn.replace(fixed_tendons_props=None),
-        init_state=SHADOW_HAND_CFG.init_state.replace(pos=init_pos, rot=init_rot),
-    )
+
+    def _for_engine(physics: str):
+        # Each engine's configuration has to come from ShadowHand.cfg, not from the other engine's
+        # with the variant string swapped: the physx variant carries no tendons in the asset and
+        # relies on a spawn function to author them, which a variant swap would drop.
+        base = ShadowHand.cfg(physics)
+        # The asset's own spawn rotation is shared by both engines, so the per-hand rotation
+        # COMPOSES with it rather than replacing it -- replacing leaves both palms turned 90
+        # degrees. See ShadowHand.cfg's init_state for why the asset carries that rotation.
+        hand_rot = tuple(
+            math_utils.quat_mul(
+                torch.tensor(init_rot, dtype=torch.float64),
+                torch.tensor(base.init_state.rot, dtype=torch.float64),
+            ).tolist()
+        )
+        # The hand's gains belong to the hand, so both tasks take them as the asset configuration
+        # supplies them. This task used to raise every actuator to stiffness 20 / damping 2, which
+        # also drove the tendon-coupled joints -- they take no position command, and MEASURED, giving
+        # them one costs the tendon most of its travel: 11.1 rad falls to 1.0 rad.
+        return base.replace(
+            prim_path=prim_path,
+            init_state=base.init_state.replace(pos=init_pos, rot=hand_rot),
+        )
+
+    hand_cfg = _for_engine("mujoco")
+    physx_cfg = _for_engine("physx")
     return preset(
-        default=newton_mjwarp_cfg,
+        default=hand_cfg,
         physx=physx_cfg,
         isaacsim_physx=physx_cfg,
-        newton_mjwarp=newton_mjwarp_cfg,
-        ovphysx=ovphysx_cfg,
+        newton_mjwarp=hand_cfg,
+        ovphysx=physx_cfg,
     )
 
 
-# Per-hand presets shared by the Direct environment and the manager scene.
+# Per-hand presets shared by the Direct environment and the manager scene. These are the per-hand
+# rotations, composed above with the asset's own; they are unchanged from the previous Newton asset,
+# which the two assets being identical geometry makes valid.
 RIGHT_HAND_CFG = _shadow_hand_cfg(
     prim_path="{ENV_REGEX_NS}/RightRobot",
     init_pos=(0.0, 0.0, 0.5),
@@ -169,13 +174,18 @@ class HandoverEnvCfg(DirectMARLEnvCfg):
         render_interval=decimation,
         physics_material=RigidBodyMaterialBaseCfg(static_friction=1.0, dynamic_friction=1.0),
         physics=PhysicsCfg(),
+        # Frame both hands and the object between them. Without this the visualizer looks at the
+        # origin from its default 4 m away, which renders the pair a few pixels wide.
+        default_visualizer_cfg=VisualizerCfg(eye=(1.15, -1.65, 1.15), lookat=(0.0, -0.5, 0.55), focal_length=35.0),
     )
 
     # robot
     right_robot_cfg: PresetCfg = RIGHT_HAND_CFG
     left_robot_cfg: PresetCfg = LEFT_HAND_CFG
-    actuated_joint_names = ACTUATED_JOINT_NAMES
-    fingertip_body_names = FINGERTIP_BODY_NAMES
+    actuated_joint_names = ShadowHand.joint_names
+    actuated_tendon_names = ShadowHand.tendon_names
+    actuated_tendon_position_limits = ShadowHand.tendon_position_limits
+    fingertip_body_names = ShadowHand.fingertip_names
 
     # in-hand object
     object_cfg: RigidObjectCfg = BALL_CFG
@@ -197,3 +207,9 @@ class HandoverEnvCfg(DirectMARLEnvCfg):
     """Object-to-goal distance below which the handover is considered successful [m]."""
     # reward-related scales
     dist_reward_scale = 20.0
+    action_penalty_scale = -0.0002
+    """Squared-action reward scale, matching the reorientation task.
+
+    Each hand pays for its own actions. The distance term is shared, so once a hand releases the ball
+    its pose stops affecting the reward and nothing else discourages it from saturating its motors.
+    """

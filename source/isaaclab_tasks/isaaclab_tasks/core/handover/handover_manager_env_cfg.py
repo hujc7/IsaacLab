@@ -20,10 +20,6 @@ from isaaclab.utils.configclass import configclass
 
 import isaaclab_tasks.core.handover.mdp as mdp
 import isaaclab_tasks.core.reorient.mdp as reorient_mdp
-from isaaclab_tasks.core.handover.handover_common import (
-    ACTUATED_JOINT_NAMES,
-    FINGERTIP_BODY_NAMES,
-)
 from isaaclab_tasks.core.handover.handover_env_cfg import (
     BALL_CFG,
     LEFT_HAND_CFG,
@@ -31,6 +27,8 @@ from isaaclab_tasks.core.handover.handover_env_cfg import (
     PhysicsCfg,
 )
 from isaaclab_tasks.utils import PresetCfg
+
+from isaaclab_assets.robots.shadow_hand import ShadowHand
 
 
 @configclass
@@ -61,22 +59,46 @@ class CommandsCfg:
     object_pose = mdp.HandoverCommandCfg(asset_name="object", success_distance_threshold=0.1, debug_vis=True)
 
 
+def _tendon_action(asset_name: str) -> mdp.FixedTendonPositionActionCfg:
+    """Position targets for one hand's four tendon motors.
+
+    Sixteen of the hand's twenty motors drive a joint each, which the joint term covers. The other
+    four pull a tendon across a finger's middle and distal joints; tendons have their own index
+    space, so no joint term can reach them.
+    """
+    lower, upper = ShadowHand.tendon_position_limits
+    half_span = 0.5 * (upper - lower)
+    return mdp.FixedTendonPositionActionCfg(
+        asset_name=asset_name,
+        tendon_names=ShadowHand.tendon_names,
+        # map the policy's [-1, 1] onto the tendon's commandable span
+        scale=half_span,
+        offset=lower + half_span,
+    )
+
+
 @configclass
 class ActionsCfg:
-    """Two-hand action terms, ordered right then left like the Direct adapter."""
+    """Two-hand action terms, ordered right then left like the Direct adapter.
+
+    Declaration order is the action layout: the manager concatenates terms as declared, and the
+    Direct adapter reads each hand as its sixteen joints followed by its four tendons.
+    """
 
     right_hand = mdp.EMAJointPositionToLimitsActionCfg(
         asset_name="right_hand",
-        joint_names=ACTUATED_JOINT_NAMES,
+        joint_names=ShadowHand.joint_names,
         alpha=1.0,
         rescale_to_limits=True,
     )
+    right_hand_tendons = _tendon_action("right_hand")
     left_hand = mdp.EMAJointPositionToLimitsActionCfg(
         asset_name="left_hand",
-        joint_names=ACTUATED_JOINT_NAMES,
+        joint_names=ShadowHand.joint_names,
         alpha=1.0,
         rescale_to_limits=True,
     )
+    left_hand_tendons = _tendon_action("left_hand")
 
 
 @configclass
@@ -90,11 +112,11 @@ class PolicyCfg(ObsGroup):
         func=mdp.joint_vel, scale=0.2, params={"asset_cfg": SceneEntityCfg("right_hand", joint_names=".*")}
     )
     right_fingertip_pose = ObsTerm(
-        func=mdp.body_pose_w, params={"asset_cfg": SceneEntityCfg("right_hand", body_names=FINGERTIP_BODY_NAMES)}
+        func=mdp.body_pose_w, params={"asset_cfg": SceneEntityCfg("right_hand", body_names=ShadowHand.fingertip_names)}
     )
     right_fingertip_vel = ObsTerm(
         func=reorient_mdp.fingertip_vel,
-        params={"asset_cfg": SceneEntityCfg("right_hand", body_names=FINGERTIP_BODY_NAMES)},
+        params={"asset_cfg": SceneEntityCfg("right_hand", body_names=ShadowHand.fingertip_names)},
     )
     right_action = ObsTerm(func=mdp.last_action, params={"action_name": "right_hand"})
     object_pos = ObsTerm(func=mdp.root_pos_w, params={"asset_cfg": SceneEntityCfg("object")})
@@ -116,11 +138,11 @@ class PolicyCfg(ObsGroup):
         func=mdp.joint_vel, scale=0.2, params={"asset_cfg": SceneEntityCfg("left_hand", joint_names=".*")}
     )
     left_fingertip_pose = ObsTerm(
-        func=mdp.body_pose_w, params={"asset_cfg": SceneEntityCfg("left_hand", body_names=FINGERTIP_BODY_NAMES)}
+        func=mdp.body_pose_w, params={"asset_cfg": SceneEntityCfg("left_hand", body_names=ShadowHand.fingertip_names)}
     )
     left_fingertip_vel = ObsTerm(
         func=reorient_mdp.fingertip_vel,
-        params={"asset_cfg": SceneEntityCfg("left_hand", body_names=FINGERTIP_BODY_NAMES)},
+        params={"asset_cfg": SceneEntityCfg("left_hand", body_names=ShadowHand.fingertip_names)},
     )
     left_action = ObsTerm(func=mdp.last_action, params={"action_name": "left_hand"})
 
