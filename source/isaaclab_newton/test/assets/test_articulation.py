@@ -726,7 +726,7 @@ def test_actuator_cfg_matches_clone_plan_root_glob(sim, device, articulation_typ
         )
     )
     monkeypatch.setattr(
-        "isaaclab_newton.assets.articulation.articulation.resolve_matching_prims_from_source",
+        "isaaclab_newton.assets.articulation.articulation.resolve_articulation_root_prims_from_source",
         lambda *_args, **_kwargs: [(None, "/World/envs/env_*/Robot/base")],
     )
     builder = _make_target_mode_builder(["joint"], [JointTargetMode.NONE], [0.0], [0.0])

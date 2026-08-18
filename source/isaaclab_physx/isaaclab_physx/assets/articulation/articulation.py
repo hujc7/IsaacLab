@@ -25,7 +25,11 @@ from isaaclab.actuators import ActuatorBase, ActuatorBaseCfg, ImplicitActuator
 from isaaclab.assets.articulation import ordering_kernels
 from isaaclab.assets.articulation.base_articulation import BaseArticulation
 from isaaclab.sim.schemas import resolve_applied_schema_instances
-from isaaclab.sim.utils.queries import find_first_matching_prim, path_expr_to_glob, resolve_matching_prims_from_source
+from isaaclab.sim.utils.queries import (
+    find_first_matching_prim,
+    path_expr_to_glob,
+    resolve_articulation_root_prims_from_source,
+)
 from isaaclab.utils.string import resolve_matching_names, resolve_matching_names_values
 from isaaclab.utils.types import ArticulationActions
 from isaaclab.utils.version import get_isaac_sim_version, has_kit
@@ -4234,12 +4238,9 @@ class Articulation(BaseArticulation):
         if self.cfg.articulation_root_prim_path is not None:
             root_prim_path_expr = self.cfg.prim_path + self.cfg.articulation_root_prim_path
         else:
-
-            def has_articulation_root_api(prim) -> bool:
-                return bool(prim.HasAPI(UsdPhysics.ArticulationRootAPI))
-
-            resolve_kwargs = {"predicate": has_articulation_root_api, "expected_num_matches": 1}
-            _, root_prim_path_expr = resolve_matching_prims_from_source(self.cfg.prim_path, **resolve_kwargs)[0]
+            _, root_prim_path_expr = resolve_articulation_root_prims_from_source(
+                self.cfg.prim_path, expected_num_matches=1
+            )[0]
         # -- articulation
         self._root_view = self._physics_sim_view.create_articulation_view(path_expr_to_glob(root_prim_path_expr))
 

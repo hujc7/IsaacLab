@@ -65,14 +65,6 @@ class ShadowHand:
     body_ordering: str = "mjwarp"
     """Public body order, chosen to match :attr:`joint_ordering` for the same reason."""
 
-    articulation_root_prim_path: str = ""
-    """Which prim under the spawn path holds the articulation root.
-
-    Stated rather than searched for: the search demands exactly one prim with an articulation-root
-    API, and the asset's root link also carries ``NewtonArticulationRootAPI``, which satisfies the
-    same ``HasAPI`` check -- so the search finds two and raises.
-    """
-
     joint_names: list[str] = [
         "rh_WRJ2",
         "rh_WRJ1",
@@ -231,7 +223,6 @@ class ShadowHand:
                 rot=(0.0, 0.0, -0.70710678118, 0.70710678118),
                 joint_pos={".*": 0.0},
             ),
-            articulation_root_prim_path=cls.articulation_root_prim_path,
             joint_ordering=cls.joint_ordering,
             body_ordering=cls.body_ordering,
             actuators={"direct_motors": cls._driven_motors, "coupled_joints": cls._coupled_joints},

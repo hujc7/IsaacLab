@@ -435,9 +435,12 @@ def _get_names_from_newton_usd_builder(
         from newton._src.usd.schemas import SchemaResolverNewton, SchemaResolverPhysx  # noqa: PLC0415
         from newton.selection import ArticulationView  # noqa: PLC0415
 
-        from pxr import UsdGeom, UsdPhysics  # noqa: PLC0415
+        from pxr import UsdGeom  # noqa: PLC0415
 
-        from isaaclab.sim.utils.queries import resolve_matching_prims_from_source  # noqa: PLC0415
+        from isaaclab.sim.utils.queries import (  # noqa: PLC0415
+            resolve_articulation_root_prims_from_source,
+            resolve_matching_prims_from_source,
+        )
         from isaaclab.sim.utils.stage import get_current_stage  # noqa: PLC0415
     except ModuleNotFoundError as exc:
         missing_module = exc.name or ""
@@ -458,16 +461,8 @@ def _get_names_from_newton_usd_builder(
     if articulation_root_prim_path is not None:
         source_articulation_path = source_asset_path + articulation_root_prim_path
     else:
-
-        def has_articulation_root_api(prim) -> bool:
-            return bool(prim.HasAPI(UsdPhysics.ArticulationRootAPI))
-
-        source_root_matches = resolve_matching_prims_from_source(
-            prim_path,
-            predicate=has_articulation_root_api,
-            expected_num_matches=1,
-        )
-        if not source_root_matches:
+        source_root_matches = resolve_articulation_root_prims_from_source(prim_path, raise_if_no_matches=False)
+        if len(source_root_matches) != 1:
             return None
         source_articulation_path = _get_prim_path_string(source_root_matches[0][0])
 
@@ -561,9 +556,10 @@ def _describe_newton_usd_builder_unavailability(articulation: BaseArticulation) 
     try:
         import newton  # noqa: F401, PLC0415
 
-        from pxr import UsdPhysics  # noqa: PLC0415
-
-        from isaaclab.sim.utils.queries import resolve_matching_prims_from_source  # noqa: PLC0415
+        from isaaclab.sim.utils.queries import (  # noqa: PLC0415
+            resolve_articulation_root_prims_from_source,
+            resolve_matching_prims_from_source,
+        )
         from isaaclab.sim.utils.stage import get_current_stage  # noqa: PLC0415
     except ModuleNotFoundError as exc:
         return f"'{exc.name or 'unknown'}' module is not installed"
@@ -576,14 +572,15 @@ def _describe_newton_usd_builder_unavailability(articulation: BaseArticulation) 
 
     articulation_root_prim_path = getattr(cfg, "articulation_root_prim_path", None)
     if articulation_root_prim_path is None:
-
-        def has_articulation_root_api(prim) -> bool:
-            return bool(prim.HasAPI(UsdPhysics.ArticulationRootAPI))
-
-        if not resolve_matching_prims_from_source(
-            prim_path, predicate=has_articulation_root_api, expected_num_matches=1
-        ):
+        roots = resolve_articulation_root_prims_from_source(prim_path, raise_if_no_matches=False)
+        if not roots:
             return "no prim with ArticulationRootAPI was found under the source asset"
+        if len(roots) > 1:
+            found = ", ".join(_get_prim_path_string(prim) for prim, _ in roots)
+            return (
+                f"several nested articulation roots were found under the source asset ({found});"
+                " set 'articulation_root_prim_path' to name the intended one"
+            )
 
     return "the Newton USD builder returned no articulation names"
 

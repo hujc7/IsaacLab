@@ -13,10 +13,8 @@ import warp as wp
 from newton import JointType
 from newton.selection import ArticulationView
 
-from pxr import UsdPhysics
-
 from isaaclab.sensors.joint_wrench import BaseJointWrenchSensor
-from isaaclab.sim.utils.queries import path_expr_to_glob, resolve_matching_prims_from_source
+from isaaclab.sim.utils.queries import path_expr_to_glob, resolve_articulation_root_prims_from_source
 
 from isaaclab_newton.physics import NewtonManager
 
@@ -128,11 +126,9 @@ class JointWrenchSensor(BaseJointWrenchSensor):
         model = NewtonManager.get_model()
         state_0 = NewtonManager.get_state_0()
 
-        def has_articulation_root_api(prim) -> bool:
-            return bool(prim.HasAPI(UsdPhysics.ArticulationRootAPI))
-
-        resolve_kwargs = {"predicate": has_articulation_root_api, "expected_num_matches": 1}
-        _, root_prim_path_expr = resolve_matching_prims_from_source(self.cfg.prim_path, **resolve_kwargs)[0]
+        _, root_prim_path_expr = resolve_articulation_root_prims_from_source(
+            self.cfg.prim_path, expected_num_matches=1
+        )[0]
         self._root_view = ArticulationView(
             model,
             path_expr_to_glob(root_prim_path_expr),
