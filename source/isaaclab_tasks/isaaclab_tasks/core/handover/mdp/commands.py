@@ -8,22 +8,21 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import MISSING
 from typing import TYPE_CHECKING
 
 import torch
 
 import isaaclab.utils.math as math_utils
-from isaaclab.managers import CommandTerm, CommandTermCfg
-from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
-from isaaclab.utils.configclass import configclass
+from isaaclab.managers import CommandTerm
+from isaaclab.markers import VisualizationMarkers
 
-from isaaclab_tasks.core.handover.handover_common import GOAL_MARKER_CFG, GOAL_POSITION_OFFSET
 from isaaclab_tasks.core.utils import EpisodeErrorRecorder
 
 if TYPE_CHECKING:
     from isaaclab.assets import RigidObject
     from isaaclab.envs import ManagerBasedRLEnv
+
+    from .commands_cfg import HandoverCommandCfg
 
 
 class HandoverCommand(CommandTerm):
@@ -38,8 +37,6 @@ class HandoverCommand(CommandTerm):
         self.pos_command_e = self._object.data.default_root_pose.torch[:, :3] + offset
         self.quat_command_w = torch.zeros(self.num_envs, 4, device=self.device)
         self.quat_command_w[:, 3] = 1.0  # identity quaternion in (x, y, z, w) layout
-        self._x_unit = torch.tensor([1.0, 0.0, 0.0], device=self.device).repeat(self.num_envs, 1)
-        self._y_unit = torch.tensor([0.0, 1.0, 0.0], device=self.device).repeat(self.num_envs, 1)
         self.metrics["goal_distance"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["success_rate"] = torch.zeros(self.num_envs, device=self.device)
         self._minimum_goal_distance = EpisodeErrorRecorder(self.num_envs, self.device)
@@ -76,11 +73,9 @@ class HandoverCommand(CommandTerm):
         return extras
 
     def _resample_command(self, env_ids: Sequence[int]) -> None:
-        random_values = 2.0 * torch.rand((len(env_ids), 2), device=self.device) - 1.0
-        self.quat_command_w[env_ids] = math_utils.quat_mul(
-            math_utils.quat_from_angle_axis(random_values[:, 0] * torch.pi, self._x_unit[env_ids]),
-            math_utils.quat_from_angle_axis(random_values[:, 1] * torch.pi, self._y_unit[env_ids]),
-        )
+        # The shared sampler covers SO(3) uniformly. Composing two axis-angle rotations, as this did,
+        # reaches only a two-axis subset and needs a unit-axis buffer per axis to do it.
+        self.quat_command_w[env_ids] = math_utils.random_orientation(len(env_ids), device=self.device)
 
     def _update_command(self) -> None:
         pass
@@ -98,17 +93,3 @@ class HandoverCommand(CommandTerm):
             translations=self.pos_command_e + self._env.scene.env_origins,
             orientations=self.quat_command_w,
         )
-
-
-@configclass
-class HandoverCommandCfg(CommandTermCfg):
-    """Configuration for :class:`HandoverCommand`."""
-
-    class_type: type[HandoverCommand] = HandoverCommand
-    resampling_time_range: tuple[float, float] = (1.0e6, 1.0e6)
-    asset_name: str = MISSING
-    position_offset: tuple[float, float, float] = GOAL_POSITION_OFFSET
-    """Goal-position offset from the object's default position [m]."""
-    success_distance_threshold: float = 0.1
-    """Object-to-goal distance below which an episode counts as successful [m]."""
-    goal_visualizer_cfg: VisualizationMarkersCfg = GOAL_MARKER_CFG.replace(prim_path="/Visuals/Command/goal_marker")
