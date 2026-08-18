@@ -15,7 +15,9 @@ from isaaclab_tasks.core.reorient.config.shadow_hand import agents
 # Register Gym environments.
 ##
 
-reorient_direct_entry = "isaaclab_tasks.core.reorient.reorient_direct_env:ReorientDirectEnv"
+reorient_direct_entry = (
+    "isaaclab_tasks.core.reorient.config.shadow_hand.shadow_hand_direct_env:ShadowHandDirectEnv"
+)
 
 
 gym.register(
