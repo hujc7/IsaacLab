@@ -42,6 +42,7 @@ from isaaclab_newton.assets.articulation import kernels as articulation_kernels
 from isaaclab_newton.physics import NewtonManager as SimulationManager
 
 from .articulation_data import ArticulationData
+from .mjc_tendon_actuator import MjcTendonActuatorView
 
 if TYPE_CHECKING:
     from isaaclab.assets.articulation.articulation_cfg import ArticulationCfg
@@ -527,6 +528,10 @@ class Articulation(BaseArticulation):
                     ],
                     device=self.device,
                 )
+        # Tendon actuator targets ride the same per-step write as everything else; the view only
+        # exists because MuJoCo keeps its actuators in arrays the articulation view does not cover.
+        if self._mjc_tendon_actuator is not None:
+            self._mjc_tendon_actuator._write_data_to_sim(SimulationManager.get_control())
 
     def update(self, dt: float):
         """Updates the simulation data.
@@ -3274,6 +3279,27 @@ class Articulation(BaseArticulation):
         """
         raise NotImplementedError()
 
+    def set_fixed_tendon_position_target_index(
+        self,
+        *,
+        target: float | torch.Tensor | wp.array,
+        fixed_tendon_ids: Sequence[int] | torch.Tensor | wp.array | None = None,
+        env_ids: Sequence[int] | torch.Tensor | wp.array | None = None,
+    ) -> None:
+        """Command the tendon's length through MuJoCo's native tendon actuator.
+
+        MuJoCo's tendon spring has a fixed setpoint, so the command goes to the actuator whose
+        transmission is the tendon rather than to the tendon itself.
+        """
+        if self._mjc_tendon_actuator is None:
+            raise RuntimeError(
+                "This articulation has no MuJoCo tendon actuator, so its tendons cannot be"
+                " commanded. The asset must author an actuator whose transmission is the tendon."
+            )
+        self._mjc_tendon_actuator.set_position_target_index(
+            target=target, actuator_ids=fixed_tendon_ids, env_ids=env_ids
+        )
+
     def set_fixed_tendon_offset_index(
         self,
         *,
@@ -4136,12 +4162,16 @@ class Articulation(BaseArticulation):
 
     def _process_tendons(self):
         """Process fixed and spatial tendons."""
+        self._mjc_tendon_actuator = None
         if self._root_view.tendon_count > 0:
             tendon_types = wp.to_torch(
                 self._root_view.get_attribute("mujoco.tendon_type", SimulationManager.get_model())
             )
             if tendon_types.sum() > 0:
                 raise NotImplementedError("Spatial tendons are not supported yet.")
+            mjc_tendon_actuator = MjcTendonActuatorView(self._root_view, SimulationManager.get_model())
+            if mjc_tendon_actuator.num_actuators > 0:
+                self._mjc_tendon_actuator = mjc_tendon_actuator
 
     def _apply_actuator_model(self):
         """Processes joint commands for the articulation by forwarding them to the actuators.

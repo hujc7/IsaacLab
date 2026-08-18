@@ -30,6 +30,7 @@ from isaaclab.assets.articulation.ordering_resolvers import (
     _canonical_joint_dof_name,
 )
 from isaaclab.physics import PhysicsManager
+from isaaclab.sim.schemas import resolve_applied_schema_instances
 from isaaclab.utils.buffers import TimestampedBufferWarp
 from isaaclab.utils.string import resolve_matching_names
 from isaaclab.utils.warp import ProxyArray
@@ -4384,13 +4385,14 @@ class Articulation(BaseArticulation):
                                 items = getattr(metadata, field, None)
                                 if items:
                                     schema_names.extend(str(item) for item in items)
-                        schemas_str = " ".join(schema_names)
+                        root_instances = resolve_applied_schema_instances(schema_names, "PhysxTendonAxisRootAPI")
                         name = prim.GetPath().name
-                        if "PhysxTendonAxisRootAPI" in schemas_str:
-                            self._fixed_tendon_names.append(name)
-                        elif (
-                            "PhysxTendonAttachmentRootAPI" in schemas_str
-                            or "PhysxTendonAttachmentLeafAPI" in schemas_str
+                        if root_instances:
+                            self._fixed_tendon_names.extend(root_instances)
+                        elif any(
+                            "PhysxTendonAttachmentRootAPI" in schema_name
+                            or "PhysxTendonAttachmentLeafAPI" in schema_name
+                            for schema_name in schema_names
                         ):
                             self._spatial_tendon_names.append(name)
                 except Exception:
