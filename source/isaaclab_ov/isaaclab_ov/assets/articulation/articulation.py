@@ -314,6 +314,12 @@ class Articulation(BaseArticulation):
         if write_vel:
             self._root_view.set_attribute(TT.DOF_VELOCITY_TARGET, vel_target)
 
+        # Fixed-tendon offsets ride the same per-step write as joint targets. A tendon target is
+        # applied as a tendon PROPERTY, so it needs the property write to take effect; doing that
+        # from the action term would make it the only sim write outside this step.
+        if self.num_fixed_tendons > 0:
+            self.write_fixed_tendon_properties_to_sim_index()
+
     def update(self, dt: float) -> None:
         """Updates the simulation data.
 
@@ -3514,7 +3520,43 @@ class Articulation(BaseArticulation):
             offset = -float(target)
         else:
             offset = -wp.to_torch(target)
-        self.set_fixed_tendon_offset_index(offset=offset, fixed_tendon_ids=fixed_tendon_ids, env_ids=env_ids)
+        # Buffer only. The offset reaches the simulation from ``write_data_to_sim``, the same shared
+        # step that flushes joint targets. ``set_fixed_tendon_offset_index`` writes immediately,
+        # which is right for a property edit but wrong for a per-step command: it would make this
+        # the only sim write outside that step.
+        self._buffer_fixed_tendon_offset_index(offset=offset, fixed_tendon_ids=fixed_tendon_ids, env_ids=env_ids)
+
+    def _buffer_fixed_tendon_offset_index(
+        self,
+        *,
+        offset: float | torch.Tensor | wp.array,
+        fixed_tendon_ids: Sequence[int] | torch.Tensor | wp.array | None = None,
+        env_ids: Sequence[int] | torch.Tensor | wp.array | None = None,
+    ) -> tuple[wp.array, wp.array] | None:
+        """Scatter fixed-tendon offsets into the cached buffer without touching the simulation.
+
+        Shared by the property setter, which pushes the buffer on to the simulation immediately, and
+        the per-step target command, which leaves that to :meth:`write_data_to_sim`.
+
+        Returns:
+            The resolved ``(env_ids, sim_env_ids)``, or ``None`` when the selection is empty.
+        """
+        env_ids = self._resolve_env_ids(env_ids)
+        tendon_ids = self._resolve_fixed_tendon_ids(fixed_tendon_ids)
+        shape = (env_ids.shape[0], tendon_ids.shape[0])
+        offset = self._broadcast_scalar_to_2d(offset, shape)
+        self.assert_shape_and_dtype(offset, shape, wp.float32, "offset")
+        if shape[0] == 0 or shape[1] == 0:
+            return None
+        sim_env_ids = self._sim_env_ids_view(env_ids.shape[0])
+        wp.launch(
+            shared_kernels.write_2d_data_to_buffer_with_indices_and_sim_ids_kernel(env_ids, tendon_ids),
+            dim=shape,
+            inputs=[offset, env_ids, tendon_ids],
+            outputs=[self._data._fixed_tendon_offset.data, sim_env_ids],
+            device=self._device,
+        )
+        return env_ids, sim_env_ids
 
     def set_fixed_tendon_offset_index(
         self,
@@ -3543,21 +3585,12 @@ class Articulation(BaseArticulation):
             fixed_tendon_ids: Fixed-tendon indices. Defaults to None (all fixed tendons).
             env_ids: Environment indices. Defaults to None (all environments).
         """
-        env_ids = self._resolve_env_ids(env_ids)
-        tendon_ids = self._resolve_fixed_tendon_ids(fixed_tendon_ids)
-        shape = (env_ids.shape[0], tendon_ids.shape[0])
-        offset = self._broadcast_scalar_to_2d(offset, shape)
-        self.assert_shape_and_dtype(offset, shape, wp.float32, "offset")
-        if shape[0] == 0 or shape[1] == 0:
-            return
-        sim_env_ids = self._sim_env_ids_view(env_ids.shape[0])
-        wp.launch(
-            shared_kernels.write_2d_data_to_buffer_with_indices_and_sim_ids_kernel(env_ids, tendon_ids),
-            dim=shape,
-            inputs=[offset, env_ids, tendon_ids],
-            outputs=[self._data._fixed_tendon_offset.data, sim_env_ids],
-            device=self._device,
+        resolved = self._buffer_fixed_tendon_offset_index(
+            offset=offset, fixed_tendon_ids=fixed_tendon_ids, env_ids=env_ids
         )
+        if resolved is None:
+            return
+        env_ids, sim_env_ids = resolved
         self._root_view.set_attribute(
             TT.FIXED_TENDON_OFFSET,
             self._data._fixed_tendon_offset.data,
