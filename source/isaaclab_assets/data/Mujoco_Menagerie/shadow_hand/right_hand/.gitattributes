@@ -1,5 +1,0 @@
-# Vendored here to make the asset fixes reviewable, so the text layers must diff as text:
-# the repository sends *.usda to LFS, which would reduce each one to a three-line pointer.
-*.usda !filter !diff !merge text
-# The geometry is binary and unreviewable either way; leave it to LFS.
-geometries.usd filter=lfs diff=lfs merge=lfs -text
