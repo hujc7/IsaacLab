@@ -156,7 +156,40 @@ class MjcTendonActuatorView:
 def _resolve_mjc_tendon_actuators(
     root_view: ArticulationView, model: Model
 ) -> tuple[list[str], np.ndarray, np.ndarray]:
-    """Resolve native actuator metadata into per-instance control rows."""
+    """Resolve native actuator metadata into per-instance control rows.
+
+    MuJoCo's tendons and their actuators reach the model as flat ``mujoco:*`` arrays spanning every
+    world, so pairing a tendon with the actuator that drives it, per articulation, is this module's
+    whole job. It runs in four steps: read the arrays, index the eligible actuators, walk the
+    instances pairing them up, then require every instance to agree.
+
+    Returns:
+        The tendon names in actuator order, the control limits ``(n_actuators, 2)``, and the control
+        row each instance writes ``(n_instances, n_actuators)``. Empty when the model carries none.
+    """
+    attributes = _read_mjc_tendon_attributes(root_view, model)
+    if attributes is None:
+        return [], np.empty((0, 2), dtype=np.float32), np.empty((root_view.count, 0), dtype=np.int32)
+
+    actuator_rows_by_target, ambiguous_targets = _index_actuators_by_target(attributes)
+    instance_names, instance_limits, instance_control_rows = _collect_instance_actuator_rows(
+        root_view, attributes, actuator_rows_by_target, ambiguous_targets
+    )
+    names, limits = _require_instances_agree(instance_names, instance_limits)
+    return (
+        names,
+        np.asarray(limits, dtype=np.float32).reshape((-1, 2)),
+        np.asarray(instance_control_rows, dtype=np.int32).reshape((root_view.count, len(names))),
+    )
+
+
+def _read_mjc_tendon_attributes(root_view: ArticulationView, model: Model) -> dict | None:
+    """Read the MuJoCo custom attributes this resolution needs.
+
+    Returns:
+        The attribute arrays plus the tendon layout, or ``None`` when the model carries no MuJoCo
+        tendons -- a model built without them is not an error, it simply has nothing to resolve.
+    """
     mujoco = getattr(model, "mujoco", None)
     tendon_layout = root_view.frequency_layouts.get("mujoco:tendon")
     required_attributes = (
@@ -170,44 +203,84 @@ def _resolve_mjc_tendon_actuators(
         "actuator_has_ctrlrange",
     )
     if tendon_layout is None or mujoco is None or any(not hasattr(mujoco, name) for name in required_attributes):
-        return [], np.empty((0, 2), dtype=np.float32), np.empty((root_view.count, 0), dtype=np.int32)
+        return None
+    return {
+        "layout": tendon_layout,
+        "tendon_labels": [str(label) for label in mujoco.tendon_label],
+        "tendon_worlds": _to_numpy(mujoco.tendon_world),
+        "actuator_target_labels": [str(label) for label in mujoco.actuator_target_label],
+        "actuator_worlds": _to_numpy(mujoco.actuator_world),
+        "actuator_trntypes": _to_numpy(mujoco.actuator_trntype),
+        "actuator_ctrl_sources": _to_numpy(mujoco.ctrl_source),
+        "actuator_control_ranges": _to_numpy(mujoco.actuator_ctrlrange),
+        "actuator_has_control_range": _to_numpy(mujoco.actuator_has_ctrlrange),
+    }
 
-    tendon_labels = [str(label) for label in mujoco.tendon_label]
-    tendon_worlds = _to_numpy(mujoco.tendon_world)
-    actuator_target_labels = [str(label) for label in mujoco.actuator_target_label]
-    actuator_worlds = _to_numpy(mujoco.actuator_world)
-    actuator_trntypes = _to_numpy(mujoco.actuator_trntype)
-    actuator_ctrl_sources = _to_numpy(mujoco.ctrl_source)
-    actuator_control_ranges = _to_numpy(mujoco.actuator_ctrlrange)
-    actuator_has_control_range = _to_numpy(mujoco.actuator_has_ctrlrange)
 
-    # Index the eligible actuators once by (world, target label). Scanning all of them per tendon
-    # instead costs minutes of startup at scale, since the arrays span every environment: measured
-    # 174 s for one hand and 344 s per articulation view for two, against 0.1 s here.
+def _index_actuators_by_target(attributes: dict) -> tuple[dict[tuple[int, str], int], set[tuple[int, str]]]:
+    """Index the directly-controlled tendon actuators by ``(world, target label)``.
+
+    Indexing once is what makes start-up affordable: scanning every actuator per tendon instead
+    measured 174 s for one hand and 344 s per articulation view for two, against 0.1 s here, because
+    the arrays span every environment.
+
+    Returns:
+        The actuator row for each target, and the targets claimed by more than one actuator, which
+        the caller rejects only if a tendon actually names one.
+    """
+    trntypes = attributes["actuator_trntypes"]
+    ctrl_sources = attributes["actuator_ctrl_sources"]
+    worlds = attributes["actuator_worlds"]
+    target_labels = attributes["actuator_target_labels"]
+
     actuator_rows_by_target: dict[tuple[int, str], int] = {}
     ambiguous_targets: set[tuple[int, str]] = set()
-    for actuator_row in np.flatnonzero((actuator_trntypes == 2) & (actuator_ctrl_sources == 1)):
+    # trntype 2 is a tendon transmission; ctrl_source 1 is a direct control input
+    for actuator_row in np.flatnonzero((trntypes == 2) & (ctrl_sources == 1)):
         actuator_row = int(actuator_row)
-        target_key = (int(actuator_worlds[actuator_row]), actuator_target_labels[actuator_row])
+        target_key = (int(worlds[actuator_row]), target_labels[actuator_row])
         if target_key in actuator_rows_by_target:
             ambiguous_targets.add(target_key)
         else:
             actuator_rows_by_target[target_key] = actuator_row
+    return actuator_rows_by_target, ambiguous_targets
+
+
+def _collect_instance_actuator_rows(
+    root_view: ArticulationView,
+    attributes: dict,
+    actuator_rows_by_target: dict[tuple[int, str], int],
+    ambiguous_targets: set[tuple[int, str]],
+) -> tuple[list[list[str]], list[list[tuple[float, float]]], list[list[int]]]:
+    """Pair each articulation instance's tendons with the actuators that drive them.
+
+    Returns:
+        Per instance: the tendon names, their control limits, and the control rows to write.
+
+    Raises:
+        ValueError: If more than one actuator targets a tendon this instance holds.
+    """
+    layout = attributes["layout"]
+    tendon_labels = attributes["tendon_labels"]
+    tendon_worlds = attributes["tendon_worlds"]
+    control_ranges = attributes["actuator_control_ranges"]
+    has_control_range = attributes["actuator_has_control_range"]
 
     # local indices the layout selects: an explicit list when it has one, else its slice
-    if tendon_layout.indices is not None:
-        local_tendon_ids = _to_numpy(tendon_layout.indices).astype(np.int64, copy=False)
+    if layout.indices is not None:
+        local_tendon_ids = _to_numpy(layout.indices).astype(np.int64, copy=False)
     else:
-        local_tendon_ids = np.arange(tendon_layout.slice.start, tendon_layout.slice.stop, dtype=np.int64)
+        local_tendon_ids = np.arange(layout.slice.start, layout.slice.stop, dtype=np.int64)
+
     instance_names: list[list[str]] = []
     instance_limits: list[list[tuple[float, float]]] = []
     instance_control_rows: list[list[int]] = []
     for world_slot in range(root_view.world_count):
         for articulation_slot in range(root_view.count_per_world):
             tendon_rows = (
-                tendon_layout.offset
-                + world_slot * tendon_layout.stride_between_worlds
-                + articulation_slot * tendon_layout.stride_within_worlds
+                layout.offset
+                + world_slot * layout.stride_between_worlds
+                + articulation_slot * layout.stride_within_worlds
                 + local_tendon_ids
             )
             names: list[str] = []
@@ -225,15 +298,30 @@ def _resolve_mjc_tendon_actuators(
                     continue
                 names.append(target_label.rsplit("/", maxsplit=1)[-1])
                 control_rows.append(actuator_row)
-                if actuator_has_control_range[actuator_row]:
-                    control_range = actuator_control_ranges[actuator_row]
+                if has_control_range[actuator_row]:
+                    control_range = control_ranges[actuator_row]
                     limits.append((float(control_range[0]), float(control_range[1])))
                 else:
                     limits.append((-float("inf"), float("inf")))
             instance_names.append(names)
             instance_limits.append(limits)
             instance_control_rows.append(control_rows)
+    return instance_names, instance_limits, instance_control_rows
 
+
+def _require_instances_agree(
+    instance_names: list[list[str]], instance_limits: list[list[tuple[float, float]]]
+) -> tuple[list[str], list[tuple[float, float]]]:
+    """Require every articulation instance to expose the same actuators.
+
+    One index space serves all instances, so instances that disagree cannot share a command buffer.
+
+    Returns:
+        The names and limits shared by every instance.
+
+    Raises:
+        ValueError: If any instance's names or limits differ from the first.
+    """
     names = instance_names[0]
     limits = instance_limits[0]
     for instance_id, (other_names, other_limits) in enumerate(
@@ -249,12 +337,7 @@ def _resolve_mjc_tendon_actuators(
                 "MuJoCo direct tendon actuator control limits differ between articulation instances: "
                 f"instance 0 has {limits}, instance {instance_id} has {other_limits}."
             )
-
-    return (
-        names,
-        np.asarray(limits, dtype=np.float32).reshape((-1, 2)),
-        np.asarray(instance_control_rows, dtype=np.int32).reshape((root_view.count, len(names))),
-    )
+    return names, limits
 
 
 def _to_numpy(value) -> np.ndarray:
