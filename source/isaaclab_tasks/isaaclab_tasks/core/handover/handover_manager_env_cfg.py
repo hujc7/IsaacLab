@@ -59,24 +59,6 @@ class CommandsCfg:
     object_pose = mdp.HandoverCommandCfg(asset_name="object", success_distance_threshold=0.1, debug_vis=True)
 
 
-def _tendon_action(asset_name: str) -> mdp.FixedTendonPositionActionCfg:
-    """Position targets for one hand's four tendon motors.
-
-    Sixteen of the hand's twenty motors drive a joint each, which the joint term covers. The other
-    four pull a tendon across a finger's middle and distal joints; tendons have their own index
-    space, so no joint term can reach them.
-    """
-    lower, upper = ShadowHand.tendon_position_limits
-    half_span = 0.5 * (upper - lower)
-    return mdp.FixedTendonPositionActionCfg(
-        asset_name=asset_name,
-        tendon_names=ShadowHand.tendon_names,
-        # map the policy's [-1, 1] onto the tendon's commandable span
-        scale=half_span,
-        offset=lower + half_span,
-    )
-
-
 @configclass
 class ActionsCfg:
     """Two-hand action terms, ordered right then left like the Direct adapter.
@@ -91,14 +73,30 @@ class ActionsCfg:
         alpha=1.0,
         rescale_to_limits=True,
     )
-    right_hand_tendons = _tendon_action("right_hand")
+    right_hand_tendons = mdp.FixedTendonPositionActionCfg(
+        asset_name="right_hand",
+        tendon_names=ShadowHand.tendon_names,
+        # the other four motors pull a tendon across a finger's middle and distal joints;
+        # tendons have their own index space, so no joint term can reach them. Map the
+        # policy's [-1, 1] onto the tendon's commandable span.
+        scale=0.5 * (ShadowHand.tendon_position_limits[1] - ShadowHand.tendon_position_limits[0]),
+        offset=0.5 * (ShadowHand.tendon_position_limits[0] + ShadowHand.tendon_position_limits[1]),
+    )
     left_hand = mdp.EMAJointPositionToLimitsActionCfg(
         asset_name="left_hand",
         joint_names=ShadowHand.joint_names,
         alpha=1.0,
         rescale_to_limits=True,
     )
-    left_hand_tendons = _tendon_action("left_hand")
+    left_hand_tendons = mdp.FixedTendonPositionActionCfg(
+        asset_name="left_hand",
+        tendon_names=ShadowHand.tendon_names,
+        # the other four motors pull a tendon across a finger's middle and distal joints;
+        # tendons have their own index space, so no joint term can reach them. Map the
+        # policy's [-1, 1] onto the tendon's commandable span.
+        scale=0.5 * (ShadowHand.tendon_position_limits[1] - ShadowHand.tendon_position_limits[0]),
+        offset=0.5 * (ShadowHand.tendon_position_limits[0] + ShadowHand.tendon_position_limits[1]),
+    )
 
 
 @configclass

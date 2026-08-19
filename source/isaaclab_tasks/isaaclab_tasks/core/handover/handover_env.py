@@ -24,6 +24,7 @@ from isaaclab_tasks.core.handover.mdp.rewards import evaluate_handover_success, 
 from isaaclab_tasks.core.utils import (
     EpisodeErrorRecorder,
     randomize_rotation,
+    resolve_actuated_tendons,
     sample_joint_positions_within_limits,
 )
 
@@ -61,18 +62,13 @@ class HandoverEnv(DirectMARLEnv):
         # one index set serves both.
         self.actuated_tendon_indices: list[int] = []
         if cfg.actuated_tendon_names:
-            self.actuated_tendon_indices, _ = self.right_hand.find_fixed_tendons(
-                cfg.actuated_tendon_names, preserve_order=True
+            self.actuated_tendon_indices, self.tendon_lower_limits, self.tendon_upper_limits = resolve_actuated_tendons(
+                self.right_hand,
+                cfg.actuated_tendon_names,
+                self.num_envs,
+                self.device,
+                cfg.actuated_tendon_position_limits,
             )
-            if len(self.actuated_tendon_indices) != len(cfg.actuated_tendon_names):
-                raise ValueError(
-                    f"Expected {len(cfg.actuated_tendon_names)} actuated tendons, found"
-                    f" {len(self.actuated_tendon_indices)}."
-                )
-            tendon_shape = (self.num_envs, len(self.actuated_tendon_indices))
-            lower, upper = cfg.actuated_tendon_position_limits
-            self.tendon_lower_limits = torch.full(tendon_shape, lower, device=self.device)
-            self.tendon_upper_limits = torch.full(tendon_shape, upper, device=self.device)
 
         # finger bodies
         self.finger_bodies, _ = self.right_hand.find_bodies(self.cfg.fingertip_body_names)
@@ -107,20 +103,9 @@ class HandoverEnv(DirectMARLEnv):
         self.y_unit_tensor = torch.tensor([0, 1, 0], dtype=torch.float, device=self.device).repeat((self.num_envs, 1))
 
     def _setup_scene(self):
-        # WORKAROUND, cause not yet identified. ``{ENV_REGEX_NS}`` is an Isaac Lab cfg macro, and
-        # ``AssetBase.__init__`` expands it unconditionally for exactly this case -- an asset a direct
-        # environment builds itself. Via ``parse_env_cfg`` that holds: these assets construct with no
-        # help here. But MEASURED, the training entry point still reaches the spawner with the macro
-        # intact: 4 "is not global" errors and 0 learning iterations without these two lines.
-        # Ruled out: the preset resolves to a plain ArticulationCfg before construction, so the
-        # ``PresetCfg`` wrapper is not the difference. Remove this once the real cause is found.
-        def _at_env_ns(cfg):
-            return cfg.replace(prim_path=cfg.prim_path.replace("{ENV_REGEX_NS}", self.scene.env_regex_ns))
-
-        # add hand, in-hand object, and goal object
-        self.right_hand = Articulation(_at_env_ns(self.cfg.right_robot_cfg))
-        self.left_hand = Articulation(_at_env_ns(self.cfg.left_robot_cfg))
-        self.object = RigidObject(_at_env_ns(self.cfg.object_cfg))
+        self.right_hand = Articulation(self.cfg.right_robot_cfg)
+        self.left_hand = Articulation(self.cfg.left_robot_cfg)
+        self.object = RigidObject(self.cfg.object_cfg)
         # add ground plane
         spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
         src, dest = "/World/envs/env_0", "/World/envs/env_{}"

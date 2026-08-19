@@ -68,7 +68,6 @@ class ReorientCommand(CommandTerm):
         self.quat_command_w[:, 3] = 1.0  # set the scalar component to 1.0
 
         # -- unit vectors
-        self._Z_UNIT_VEC = torch.tensor([0, 0, 1.0], device=self.device).repeat((self.num_envs, 1))
 
         # -- metrics
         self.metrics["orientation_error"] = torch.zeros(self.num_envs, device=self.device)

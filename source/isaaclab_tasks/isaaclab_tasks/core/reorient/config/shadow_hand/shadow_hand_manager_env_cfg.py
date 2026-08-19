@@ -45,10 +45,6 @@ class ShadowHandManagerSceneCfg(ReorientSceneBaseCfg):
     object: RigidObjectCfg = CUBE_CFG
 
 
-_TENDON_LOWER, _TENDON_UPPER = ShadowHand.tendon_position_limits
-_TENDON_HALF_SPAN = 0.5 * (_TENDON_UPPER - _TENDON_LOWER)
-
-
 @configclass
 class ShadowHandActionsCfg(ActionsCfg):
     """The shared joint term, plus the tendon term only this hand needs.
@@ -62,8 +58,8 @@ class ShadowHandActionsCfg(ActionsCfg):
         asset_name="robot",
         tendon_names=ShadowHand.tendon_names,
         # map the policy's [-1, 1] onto the tendon's commandable span
-        scale=_TENDON_HALF_SPAN,
-        offset=_TENDON_LOWER + _TENDON_HALF_SPAN,
+        scale=0.5 * (ShadowHand.tendon_position_limits[1] - ShadowHand.tendon_position_limits[0]),
+        offset=0.5 * (ShadowHand.tendon_position_limits[0] + ShadowHand.tendon_position_limits[1]),
     )
 
 

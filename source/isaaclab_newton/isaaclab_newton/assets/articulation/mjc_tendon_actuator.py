@@ -194,7 +194,11 @@ def _resolve_mjc_tendon_actuators(
         else:
             actuator_rows_by_target[target_key] = actuator_row
 
-    local_tendon_ids = _layout_local_indices(tendon_layout)
+    # local indices the layout selects: an explicit list when it has one, else its slice
+    if tendon_layout.indices is not None:
+        local_tendon_ids = _to_numpy(tendon_layout.indices).astype(np.int64, copy=False)
+    else:
+        local_tendon_ids = np.arange(tendon_layout.slice.start, tendon_layout.slice.stop, dtype=np.int64)
     instance_names: list[list[str]] = []
     instance_limits: list[list[tuple[float, float]]] = []
     instance_control_rows: list[list[int]] = []
@@ -253,20 +257,18 @@ def _resolve_mjc_tendon_actuators(
     )
 
 
-def _layout_local_indices(layout) -> np.ndarray:
-    """Return local indices selected by a Newton frequency layout."""
-    if layout.indices is not None:
-        return _to_numpy(layout.indices).astype(np.int64, copy=False)
-    return np.arange(layout.slice.start, layout.slice.stop, dtype=np.int64)
-
-
 def _to_numpy(value) -> np.ndarray:
     """Convert a Warp array or array-like value to a NumPy array."""
     return value.numpy() if isinstance(value, wp.array) else np.asarray(value)
 
 
 def _assert_float32_shape(target: torch.Tensor | wp.array, shape: tuple[int, int], name: str) -> None:
-    """Validate a floating-point target tensor's shape and dtype."""
+    """Validate a floating-point target tensor's shape and dtype.
+
+    Narrower than :meth:`~isaaclab.assets.AssetBase.assert_shape_and_dtype`, which does the same job
+    for any dtype and rank. That one is an instance method on the asset, and this view is not an
+    asset, so it cannot be reached from here.
+    """
     if isinstance(target, torch.Tensor):
         if target.dtype != torch.float32:
             raise TypeError(f"{name} must have dtype torch.float32, got {target.dtype}.")
