@@ -4158,9 +4158,12 @@ class Articulation(BaseArticulation):
         if self.cfg.articulation_root_prim_path is not None:
             root_prim_path_expr = self.cfg.prim_path + self.cfg.articulation_root_prim_path
         else:
-            root_matches = sim_utils.resolve_articulation_root_prims_from_source(
-                self.cfg.prim_path, expected_num_matches=1
-            )
+
+            def has_articulation_root_api(prim) -> bool:
+                return bool(prim.HasAPI(UsdPhysics.ArticulationRootAPI))
+
+            resolve_kwargs = {"predicate": has_articulation_root_api, "expected_num_matches": 1}
+            root_matches = sim_utils.resolve_matching_prims_from_source(self.cfg.prim_path, **resolve_kwargs)
             _, root_prim_path_expr = root_matches[0]
         # Validate the prim exists on the live stage -- ``create_tensor_binding`` silently
         # returns a 0-count binding when the pattern matches nothing, surfacing as obscure

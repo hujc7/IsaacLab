@@ -501,57 +501,6 @@ def resolve_matching_prims_from_source(
     return results
 
 
-def resolve_articulation_root_prims_from_source(
-    path_expr: str,
-    expected_num_matches: int | None = None,
-    raise_if_no_matches: bool = True,
-) -> list[tuple[Usd.Prim, str]]:
-    """Resolve the articulation roots under *path_expr*, keeping only the outermost of any nest.
-
-    More than one prim can answer the articulation-root query without the asset being ambiguous.
-    A backend-specific root such as ``NewtonArticulationRootAPI`` includes ``ArticulationRootAPI``
-    among its built-in schemas, so a link carrying the former also answers for the latter, while
-    the enclosing prim carries the root PhysX needs to treat the articulation as fixed-base. Both
-    are required, and the outer prim describes the articulation the inner one belongs to -- so a
-    root nested inside another is dropped rather than counted.
-
-    Sibling roots are still an error: they are separate articulations, and nothing in the asset
-    says which one was meant.
-
-    Args:
-        path_expr: Prim path expression to search beneath.
-        expected_num_matches: Optional exact count, applied after nested roots are dropped.
-        raise_if_no_matches: Whether to raise when no prim matches ``path_expr``. Defaults to True.
-
-    Returns:
-        A list of ``(source_prim, destination_expr)`` pairs, outermost roots only.
-
-    Raises:
-        RuntimeError: If the outermost count does not equal ``expected_num_matches``.
-    """
-    from pxr import UsdPhysics  # noqa: PLC0415
-
-    def has_articulation_root_api(prim: Usd.Prim) -> bool:
-        return bool(prim.HasAPI(UsdPhysics.ArticulationRootAPI))
-
-    matches = resolve_matching_prims_from_source(
-        path_expr, predicate=has_articulation_root_api, raise_if_no_matches=raise_if_no_matches
-    )
-    outermost: list[tuple[Usd.Prim, str]] = []
-    for match in sorted(matches, key=lambda item: len(item[0].GetPath().pathString)):
-        if not any(match[0].GetPath().HasPrefix(kept[0].GetPath()) for kept in outermost):
-            outermost.append(match)
-
-    if expected_num_matches is not None and len(outermost) != expected_num_matches:
-        found = ", ".join(prim.GetPath().pathString for prim, _ in outermost)
-        raise RuntimeError(
-            f"Expected {expected_num_matches} articulation roots at '{path_expr}', found"
-            f" {len(outermost)}{f' ({found})' if found else ''}. Set 'articulation_root_prim_path'"
-            " to name the intended one."
-        )
-    return outermost
-
-
 def find_matching_prim_paths(prim_path_regex: str, stage: Usd.Stage | None = None) -> list[str]:
     """Find all the matching prim paths in the stage based on input regex expression.
 

@@ -21,10 +21,12 @@ from newton import JointTargetMode, JointType, ModelFlags
 from newton.selection import ArticulationView
 from prettytable import PrettyTable
 
+from pxr import UsdPhysics
+
 from isaaclab.actuators import ActuatorBase, ActuatorBaseCfg, ImplicitActuator
 from isaaclab.assets.articulation import ordering_kernels
 from isaaclab.assets.articulation.base_articulation import BaseArticulation
-from isaaclab.sim.utils.queries import path_expr_to_glob, resolve_articulation_root_prims_from_source
+from isaaclab.sim.utils.queries import path_expr_to_glob, resolve_matching_prims_from_source
 
 _HAS_NEWTON_ACTUATORS = importlib.util.find_spec("isaaclab_newton.actuators") is not None
 
@@ -83,7 +85,11 @@ def _resolve_articulation_root_prim_path_expr(cfg: ArticulationCfg) -> str:
     if cfg.articulation_root_prim_path is not None:
         return cfg.prim_path + cfg.articulation_root_prim_path
 
-    return resolve_articulation_root_prims_from_source(cfg.prim_path, expected_num_matches=1)[0][1]
+    def has_articulation_root_api(prim) -> bool:
+        return bool(prim.HasAPI(UsdPhysics.ArticulationRootAPI))
+
+    resolve_kwargs = {"predicate": has_articulation_root_api, "expected_num_matches": 1}
+    return resolve_matching_prims_from_source(cfg.prim_path, **resolve_kwargs)[0][1]
 
 
 def _configure_builder_joint_target_modes(builder, cfg: ArticulationCfg) -> None:
