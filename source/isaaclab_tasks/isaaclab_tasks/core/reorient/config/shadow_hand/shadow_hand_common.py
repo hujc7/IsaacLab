@@ -217,6 +217,16 @@ class PhysicsCfg(PresetCfg):
     physx = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)
     default = newton_mjwarp
 
+    # The hand's configuration used to override four PhysX articulation-root settings, carried over
+    # from the pre-unification asset. The asset authors none of them and Newton has no equivalent, so
+    # they were dropped rather than restated per engine. Kept here, inactive, in case a run shows the
+    # solver defaults are not enough:
+    #
+    #   solver_position_iteration_count=8
+    #   solver_velocity_iteration_count=0
+    #   sleep_threshold=0.005
+    #   stabilization_threshold=0.0005
+
 
 GOAL_OBJECT_CFG = VisualizationMarkersCfg(
     prim_path="/Visuals/goal_marker",

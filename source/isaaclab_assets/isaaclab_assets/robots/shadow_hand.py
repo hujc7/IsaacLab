@@ -196,11 +196,11 @@ class ShadowHand:
     def cfg(cls, physics: str = "mujoco") -> ArticulationCfg:
         """Return the hand's configuration for one physics engine.
 
-        The engine is selected by the asset's ``Physics`` USD variant. Everything else is shared
-        except where the engines genuinely differ: the tendon gains, which each engine expresses in
-        its own units, and the solver settings, which have no cross-engine meaning. The spawn pose
-        is shared -- see :attr:`cfg`'s ``init_state`` for why this asset needs no per-engine
-        rotation, unlike the pair of assets it replaces.
+        The engine is selected by the asset's ``Physics`` USD variant and nothing else differs:
+        the returned configuration is identical for both. Per-engine values that cannot be shared,
+        such as the tendon gains each engine expresses in its own units, are authored in the asset's
+        variants rather than restated here. The spawn pose is shared -- see :attr:`cfg`'s
+        ``init_state`` for why this asset needs no per-engine rotation, unlike the pair it replaces.
 
         Args:
             physics: ``"mujoco"`` for the Newton (MJWarp) solver, or ``"physx"`` for PhysX.
@@ -212,14 +212,12 @@ class ShadowHand:
             spawn=sim_utils.UsdFileCfg(
                 usd_path=cls.usd_path,
                 variants={"Physics": physics},
-                activate_contact_sensors=False,
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(
                     disable_gravity=True,
                     retain_accelerations=True,
                     max_depenetration_velocity=1000.0,
                 ),
                 articulation_props=sim_utils.ArticulationRootPropertiesCfg(enabled_self_collisions=True),
-                joint_drive_props=sim_utils.JointDrivePropertiesCfg(drive_type="force"),
             ),
             init_state=ArticulationCfg.InitialStateCfg(
                 pos=(0.0, 0.0, 0.5),
@@ -241,23 +239,8 @@ class ShadowHand:
             joint_ordering=cls.joint_ordering,
             body_ordering=cls.body_ordering,
             actuators={"direct_motors": cls._driven_motors, "coupled_joints": cls._coupled_joints},
-            soft_joint_pos_limit_factor=1.0,
         )
-        if physics == "mujoco":
-            return base
-        return base.replace(
-            spawn=base.spawn.replace(
-                articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                    enabled_self_collisions=True,
-                    solver_position_iteration_count=8,
-                    solver_velocity_iteration_count=0,
-                    sleep_threshold=0.005,
-                    stabilization_threshold=0.0005,
-                ),
-                # No fixed_tendons_props here: the asset's physx variant carries each tendon's
-                # gains, so restating them would let the config and the asset drift apart.
-            ),
-        )
+        return base
 
 
 SHADOW_HAND_CFG = ShadowHand.cfg("physx")
