@@ -133,7 +133,7 @@ class ShadowHand:
 
     _driven_motors = ImplicitActuatorCfg(
         joint_names_expr=joint_names,
-        effort_limit_sim={
+        joint_effort_limit={
             "rh_WRJ2": 10.0,
             "rh_WRJ1": 5.0,
             "rh_(FF|MF|RF)J(4|3)": 1.0,
@@ -179,7 +179,7 @@ class ShadowHand:
         # joint's effort limit is the only place the model's cap can live: the MuJoCo payload caps
         # each tendon actuator at ``mjc:forceRange`` +/-1, and the previous PhysX Shadow Hand gave
         # these same physical joints 0.9 and 0.7245.
-        effort_limit_sim={
+        joint_effort_limit={
             "rh_(FF|MF|RF|LF)J2": 0.9,
             "rh_(FF|MF|RF|LF)J1": 0.7245,
         },
@@ -260,4 +260,11 @@ SHADOW_HAND_CFG = ShadowHand.cfg("physx")
 Deprecated: call :meth:`ShadowHand.cfg` with the engine's variant instead, which names the engine at
 the call site and covers every variant rather than only this one. Kept because this symbol is
 exported from the package root and removing it would break callers outside the repository.
+"""
+
+SHADOW_HAND_NEWTON_CFG = ShadowHand.cfg("mujoco")
+"""Shadow Hand on the asset's MuJoCo variant.
+
+Deprecated: call :meth:`ShadowHand.cfg` instead. Kept as the migration path for the pre-unification
+name, when the MuJoCo and PhysX hands were separate configs rather than variants of one asset.
 """
