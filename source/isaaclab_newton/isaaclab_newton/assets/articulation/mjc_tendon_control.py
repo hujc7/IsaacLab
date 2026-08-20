@@ -185,35 +185,27 @@ def resolve_fixed_tendon_control_rows(root_view: ArticulationView, model: Model)
     tendon_labels = [str(label) for label in mujoco.tendon_label]
     tendon_worlds = _to_numpy(mujoco.tendon_world)
     actuator_rows_by_target, ambiguous_targets = _index_direct_tendon_actuators(mujoco)
-    local_tendon_ids = _local_tendon_ids(tendon_layout)
-    control_rows = np.full((root_view.count, len(local_tendon_ids)), -1, dtype=np.int32)
+    tendon_rows = _global_tendon_rows(root_view, tendon_layout)
+    _assert_rows_agree_with_view(root_view, model, tendon_rows, tendon_worlds)
+    control_rows = np.full(tendon_rows.shape, -1, dtype=np.int32)
 
-    instance_id = 0
-    for world_slot in range(root_view.world_count):
-        for articulation_slot in range(root_view.count_per_world):
-            tendon_rows = (
-                tendon_layout.offset
-                + world_slot * tendon_layout.stride_between_worlds
-                + articulation_slot * tendon_layout.stride_within_worlds
-                + local_tendon_ids
+    for instance_id, instance_tendon_rows in enumerate(tendon_rows):
+        for tendon_id, tendon_row in enumerate(instance_tendon_rows):
+            tendon_label = tendon_labels[tendon_row]
+            # An actuator in the tendon's own world takes precedence over a world-agnostic one.
+            target_keys = (
+                (int(tendon_worlds[tendon_row]), tendon_label),
+                (_GLOBAL_ACTUATOR_WORLD, tendon_label),
             )
-            for tendon_id, tendon_row in enumerate(tendon_rows):
-                tendon_label = tendon_labels[tendon_row]
-                # An actuator in the tendon's own world takes precedence over a world-agnostic one.
-                target_keys = (
-                    (int(tendon_worlds[tendon_row]), tendon_label),
-                    (_GLOBAL_ACTUATOR_WORLD, tendon_label),
+            ambiguous_key = next((key for key in target_keys if key in ambiguous_targets), None)
+            if ambiguous_key is not None:
+                raise ValueError(
+                    f"Multiple direct MuJoCo tendon actuators target '{tendon_label}' in world {ambiguous_key[0]}."
                 )
-                ambiguous_key = next((key for key in target_keys if key in ambiguous_targets), None)
-                if ambiguous_key is not None:
-                    raise ValueError(
-                        f"Multiple direct MuJoCo tendon actuators target '{tendon_label}' in world {ambiguous_key[0]}."
-                    )
-                control_rows[instance_id, tendon_id] = next(
-                    (actuator_rows_by_target[key] for key in target_keys if key in actuator_rows_by_target),
-                    -1,
-                )
-            instance_id += 1
+            control_rows[instance_id, tendon_id] = next(
+                (actuator_rows_by_target[key] for key in target_keys if key in actuator_rows_by_target),
+                -1,
+            )
 
     # One index space serves every instance, so instances that disagree cannot share a buffer. The
     # rows themselves differ between worlds by construction; only commandability must match.
@@ -251,6 +243,53 @@ def _index_direct_tendon_actuators(mujoco) -> tuple[dict[tuple[int, str], int], 
         else:
             actuator_rows_by_target[target_key] = actuator_row
     return actuator_rows_by_target, ambiguous_targets
+
+
+def _global_tendon_rows(root_view: ArticulationView, tendon_layout) -> np.ndarray:
+    """Map each instance's fixed tendons to their model-global rows.
+
+    Returns:
+        Model-global tendon rows, shape ``(num_instances, num_fixed_tendons)``, instances ordered
+        world-major to match the ``(world_count, count_per_world, ...)`` shape the view reports.
+    """
+    local_tendon_ids = _local_tendon_ids(tendon_layout)
+    world_slots = np.arange(root_view.world_count, dtype=np.int64)[:, None, None]
+    articulation_slots = np.arange(root_view.count_per_world, dtype=np.int64)[None, :, None]
+    rows = (
+        tendon_layout.offset
+        + world_slots * tendon_layout.stride_between_worlds
+        + articulation_slots * tendon_layout.stride_within_worlds
+        + local_tendon_ids[None, None, :]
+    )
+    return rows.reshape(root_view.count, len(local_tendon_ids))
+
+
+def _assert_rows_agree_with_view(
+    root_view: ArticulationView, model: Model, tendon_rows: np.ndarray, tendon_worlds: np.ndarray
+) -> None:
+    """Check the row arithmetic above against Newton's own application of the same layout.
+
+    :func:`_global_tendon_rows` restates addressing that :class:`~newton.selection.ArticulationView`
+    performs internally, and ``FrequencyLayout`` exposes no accessor to borrow instead. A drift
+    between the two would keep the rows in range and silently bind the wrong tendons, so compare a
+    tendon-frequency attribute gathered both ways: this function's rows, and the view's own strided
+    read of ``mujoco.tendon_world``.
+
+    Raises:
+        RuntimeError: If the two disagree, meaning this module's addressing no longer matches
+            Newton's.
+    """
+    view_tendon_worlds = _to_numpy(root_view.get_attribute("mujoco.tendon_world", model))
+    if view_tendon_worlds.size != tendon_rows.size:
+        raise RuntimeError(
+            f"ArticulationView reports {view_tendon_worlds.size} tendon values but this module addressed"
+            f" {tendon_rows.size}."
+        )
+    if not np.array_equal(tendon_worlds[tendon_rows], view_tendon_worlds.reshape(tendon_rows.shape)):
+        raise RuntimeError(
+            "MuJoCo fixed-tendon row addressing disagrees with ArticulationView's own layout. Newton's"
+            " frequency-layout convention has changed and this module must be updated to match."
+        )
 
 
 def _local_tendon_ids(tendon_layout) -> np.ndarray:

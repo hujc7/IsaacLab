@@ -69,6 +69,11 @@ def _make_root_view_and_model(actuator_worlds=(0, 0, 0, 1, 1, 1), extra_actuator
         world_count=2,
         count_per_world=1,
         frequency_layouts={"mujoco:tendon": tendon_layout},
+        # Newton applies the layout itself here; the module cross-checks its own addressing
+        # against this read. Shape mirrors the view's (world_count, count_per_world, value_count).
+        get_attribute=lambda name, source: wp.array(
+            np.array([[[0, 0, 0]], [[1, 1, 1]]], dtype=np.int32), dtype=wp.int32, device="cpu"
+        ),
     )
     return root_view, SimpleNamespace(mujoco=mujoco)
 
@@ -148,6 +153,21 @@ def test_write_without_mujoco_ctrl_is_rejected():
 
     with pytest.raises(RuntimeError, match="mujoco.ctrl"):
         control.write_data_to_sim(SimpleNamespace())
+
+
+def test_row_addressing_that_disagrees_with_the_view_is_rejected():
+    """Fail loudly if this module's layout arithmetic drifts from Newton's own.
+
+    The rows would still be in range, so without this the drift binds the wrong tendons silently.
+    """
+    root_view, model = _make_root_view_and_model()
+    # Stand in for a Newton layout convention this module no longer matches.
+    root_view.get_attribute = lambda name, source: wp.array(
+        np.array([[[1, 1, 1]], [[0, 0, 0]]], dtype=np.int32), dtype=wp.int32, device="cpu"
+    )
+
+    with pytest.raises(RuntimeError, match="disagrees with ArticulationView"):
+        resolve_fixed_tendon_control_rows(root_view, model)
 
 
 def test_model_without_mujoco_tendons_resolves_to_none():
