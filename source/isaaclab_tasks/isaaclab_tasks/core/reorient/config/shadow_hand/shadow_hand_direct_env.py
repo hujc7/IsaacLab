@@ -7,11 +7,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import torch
-
 from isaaclab.utils.math import unscale_transform
 
 from isaaclab_tasks.core.reorient.reorient_direct_env import ReorientDirectEnv
+from isaaclab_tasks.core.reorient.utils import resolve_actuated_tendons
 
 if TYPE_CHECKING:
     from isaaclab_tasks.core.reorient.config.shadow_hand.shadow_hand_direct_env_cfg import ShadowHandEnvCfg
@@ -31,16 +30,13 @@ class ShadowHandDirectEnv(ReorientDirectEnv):
 
     def __init__(self, cfg: ShadowHandEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
-        self.actuated_tendon_indices, _ = self.hand.find_fixed_tendons(cfg.actuated_tendon_names, preserve_order=True)
-        if len(self.actuated_tendon_indices) != len(cfg.actuated_tendon_names):
-            raise ValueError(
-                f"Expected {len(cfg.actuated_tendon_names)} actuated tendons, found"
-                f" {len(self.actuated_tendon_indices)}."
-            )
-        tendon_shape = (self.num_envs, len(self.actuated_tendon_indices))
-        lower, upper = cfg.actuated_tendon_position_limits
-        self.tendon_lower_limits = torch.full(tendon_shape, lower, device=self.device)
-        self.tendon_upper_limits = torch.full(tendon_shape, upper, device=self.device)
+        self.actuated_tendon_indices, self.tendon_lower_limits, self.tendon_upper_limits = resolve_actuated_tendons(
+            self.hand,
+            cfg.actuated_tendon_names,
+            self.num_envs,
+            self.device,
+            cfg.actuated_tendon_position_limits,
+        )
 
     def _apply_action(self) -> None:
         # Actions are ordered joints first, then tendons, matching the manager task's action terms.
