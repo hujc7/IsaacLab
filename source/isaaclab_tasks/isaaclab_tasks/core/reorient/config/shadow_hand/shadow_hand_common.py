@@ -201,6 +201,12 @@ class PhysicsCfg(PresetCfg):
         bounce_threshold_velocity=0.2,
         gpu_max_rigid_contact_count=2**23,
         gpu_max_rigid_patch_count=2**23,
+        # A 24-joint hand under finger-object contact diverges on PhysX's default solver
+        # budget: MEASURED 2026-08-19, every Shadow task NaN-ed between iterations 3 and 105
+        # while Allegro, which does not use this asset, trained clean. The clamp restores the
+        # eight position iterations the pre-unification configuration set per articulation.
+        min_position_iteration_count=8,
+        enable_stabilization=True,
     )
     newton_mjwarp = NewtonCfg(
         solver_cfg=MJWarpSolverCfg(
@@ -216,16 +222,6 @@ class PhysicsCfg(PresetCfg):
     ovphysx = OvPhysxCfg()
     physx = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)
     default = newton_mjwarp
-
-    # The hand's configuration used to override four PhysX articulation-root settings, carried over
-    # from the pre-unification asset. The asset authors none of them and Newton has no equivalent, so
-    # they were dropped rather than restated per engine. Kept here, inactive, in case a run shows the
-    # solver defaults are not enough:
-    #
-    #   solver_position_iteration_count=8
-    #   solver_velocity_iteration_count=0
-    #   sleep_threshold=0.005
-    #   stabilization_threshold=0.0005
 
 
 GOAL_OBJECT_CFG = VisualizationMarkersCfg(
