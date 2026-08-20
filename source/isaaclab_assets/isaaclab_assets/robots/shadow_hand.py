@@ -217,7 +217,18 @@ class ShadowHand:
                     retain_accelerations=True,
                     max_depenetration_velocity=1000.0,
                 ),
-                articulation_props=sim_utils.ArticulationRootPropertiesCfg(enabled_self_collisions=True),
+                articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+                    enabled_self_collisions=True,
+                    # PhysX only. MEASURED 2026-08-19: without these the hand diverges to
+                    # non-finite observations at iteration 49 (reorient) and 3 (handover),
+                    # reproducibly, while Allegro on the same backend trains clean. The
+                    # scene-level `min_position_iteration_count` clamp does NOT substitute --
+                    # a run with it produced a byte-identical log. Newton ignores them.
+                    solver_position_iteration_count=8,
+                    solver_velocity_iteration_count=0,
+                    sleep_threshold=0.005,
+                    stabilization_threshold=0.0005,
+                ),
             ),
             init_state=ArticulationCfg.InitialStateCfg(
                 pos=(0.0, 0.0, 0.5),

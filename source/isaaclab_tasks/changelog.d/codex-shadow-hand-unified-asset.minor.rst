@@ -19,9 +19,7 @@ Fixed
 Fixed
 ^^^^^
 
-* Fixed the Shadow Hand reorientation and handover tasks diverging on PhysX. The hand's
-  configuration previously raised its own solver iteration count; with that override removed the
-  default budget is not enough for twenty-four joints under finger-object contact, and training
-  ended with non-finite observations. The physics preset now clamps the scene's minimum position
-  iterations and enables stabilization, so the setting is visible alongside the other solver
-  choices instead of being attached to the asset.
+* Fixed the Shadow Hand reorientation and handover tasks diverging on PhysX. Twenty-four joints
+  under finger-object contact need more solver iterations than the default budget provides, and
+  training ended with non-finite observations. The hand's configuration sets them again for both
+  engines; Newton ignores them.
