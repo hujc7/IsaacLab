@@ -65,20 +65,6 @@ class ShadowHand:
     body_ordering: str = "mjwarp"
     """Public body order, chosen to match :attr:`joint_ordering` for the same reason."""
 
-    articulation_root_prim_path: str = ""
-    """Which prim under the spawn path holds the articulation root. ``""`` is the spawn path itself.
-
-    Stated rather than searched for: the search demands exactly one prim with an articulation-root
-    API, and MEASURED in Kit, two answer. ``/right_shadow_hand`` authors ``PhysicsArticulationRootAPI``,
-    which is where PhysX needs it for the world weld to make the hand fixed-base; the root link carries
-    ``NewtonArticulationRootAPI``, which includes the USD one among its built-in schemas and so answers
-    the same ``HasAPI`` check.
-
-    Both are correct and each engine needs its own, so this is not an asset defect to fix. Nor can the
-    search pick for them: an asset whose tendons are scoped to a nested articulation needs the inner
-    root, while this hand needs the outer one. Only the configuration knows which was meant.
-    """
-
     joint_names: list[str] = [
         "rh_WRJ2",
         "rh_WRJ1",
@@ -246,7 +232,6 @@ class ShadowHand:
                 rot=(0.0, 0.0, -0.70710678118, 0.70710678118),
                 joint_pos={".*": 0.0},
             ),
-            articulation_root_prim_path=cls.articulation_root_prim_path,
             joint_ordering=cls.joint_ordering,
             body_ordering=cls.body_ordering,
             actuators={"direct_motors": cls._driven_motors, "coupled_joints": cls._coupled_joints},
