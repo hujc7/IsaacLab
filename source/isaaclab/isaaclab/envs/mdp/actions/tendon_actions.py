@@ -42,7 +42,14 @@ class FixedTendonPositionAction(ActionTerm):
     def __init__(self, cfg: actions_cfg.FixedTendonPositionActionCfg, env: ManagerBasedEnv):
         super().__init__(cfg, env)
 
-        self._tendon_ids, self._tendon_names = self._asset.find_fixed_tendons(cfg.tendon_names, preserve_order=True)
+        # Resolve as a proxy and keep the torch view: a plain list would be converted to a fresh
+        # device array on every apply_actions, which is a per-step allocation on the control path.
+        tendon_ids, self._tendon_names = self._asset.find_fixed_tendons(
+            cfg.tendon_names, preserve_order=True, as_proxy=True
+        )
+        self._num_tendons = len(tendon_ids)
+        self._tendon_ids = tendon_ids.torch
+
         self._raw_actions = torch.zeros(self.num_envs, self.action_dim, device=self.device)
         self._processed_actions = torch.zeros_like(self._raw_actions)
 
@@ -55,7 +62,7 @@ class FixedTendonPositionAction(ActionTerm):
 
     @property
     def action_dim(self) -> int:
-        return len(self._tendon_ids)
+        return self._num_tendons
 
     @property
     def raw_actions(self) -> torch.Tensor:
