@@ -16,7 +16,7 @@ import isaaclab.utils.math as math_utils
 from isaaclab.managers import CommandTerm
 from isaaclab.markers import VisualizationMarkers
 
-from isaaclab_tasks.core.utils import EpisodeErrorRecorder
+from isaaclab_tasks.core.reorient.utils import EpisodeErrorRecorder
 
 if TYPE_CHECKING:
     from isaaclab.assets import RigidObject

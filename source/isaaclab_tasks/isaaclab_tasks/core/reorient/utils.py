@@ -3,7 +3,10 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Shared utilities for core learning tasks."""
+"""Helpers for the in-hand reorientation task family.
+
+The hand-over task also uses these, as it already builds on this package's MDP terms.
+"""
 
 from collections.abc import Sequence
 

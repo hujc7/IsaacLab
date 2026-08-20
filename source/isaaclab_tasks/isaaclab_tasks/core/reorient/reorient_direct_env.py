@@ -28,7 +28,7 @@ from isaaclab.utils.math import (
     unscale_transform,
 )
 
-from isaaclab_tasks.core.utils import (
+from isaaclab_tasks.core.reorient.utils import (
     EpisodeErrorRecorder,
     randomize_rotation,
     sample_joint_positions_within_limits,
