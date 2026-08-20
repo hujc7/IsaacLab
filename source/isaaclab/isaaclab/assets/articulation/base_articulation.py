@@ -2228,6 +2228,7 @@ class BaseArticulation(AssetBase):
         """
         raise NotImplementedError()
 
+    @abstractmethod
     def set_fixed_tendon_offset_index(
         self,
         *,
