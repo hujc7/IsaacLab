@@ -1755,6 +1755,11 @@ class ArticulationData(BaseArticulationData):
         else:
             self._fixed_tendon_stiffness = wp.zeros((self._num_instances, 0), dtype=wp.float32, device=self.device)
             self._fixed_tendon_damping = wp.zeros((self._num_instances, 0), dtype=wp.float32, device=self.device)
+        # Unlike the properties above this is a per-step command, so it starts at zero rather than
+        # cloning a sim binding: MuJoCo holds the tendon's control in its own array, not on the tendon.
+        self._fixed_tendon_position_target = wp.zeros(
+            (self._num_instances, self._num_fixed_tendons), dtype=wp.float32, device=self.device
+        )
 
         # Initialize the lazy buffers.
         # -- link frame w.r.t. world frame

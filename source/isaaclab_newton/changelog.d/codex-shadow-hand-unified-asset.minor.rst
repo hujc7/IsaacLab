@@ -21,3 +21,9 @@ Fixed
 * Fixed :meth:`~isaaclab.assets.articulation.BaseArticulation.set_fixed_tendon_position_target_index`
   ignoring ``env_ids`` on Newton. A command for a subset of environments was sized against every
   instance and raised, where PhysX applied it to the environments given.
+
+* Fixed Newton tendon commands interpreting fixed-tendon IDs as IDs in a filtered list of direct
+  MuJoCo actuators, so a tendon ID addressed a different tendon than the one
+  :meth:`~isaaclab.assets.articulation.BaseArticulation.find_fixed_tendons` named. Commands now use
+  the articulation's fixed-tendon index space, and any tendon without a direct position actuator is
+  named in a warning at start-up; commanding one has no effect.

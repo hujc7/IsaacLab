@@ -6,9 +6,7 @@
 __all__ = [
     "Articulation",
     "ArticulationData",
-    "MjcTendonActuatorView",
 ]
 
 from .articulation import Articulation
 from .articulation_data import ArticulationData
-from .mjc_tendon_actuator import MjcTendonActuatorView
