@@ -199,9 +199,17 @@ class ShadowHand:
                 usd_path=cls.usd_path,
                 variants={"Physics": physics},
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                    # Shared with Allegro, the other hand in these tasks, and with most robot configs
+                    # (23/30 set disable_gravity, 27/30 set max_depenetration_velocity).
                     disable_gravity=True,
-                    retain_accelerations=True,
                     max_depenetration_velocity=1000.0,
+                    # PhysX only, and inherited from the pre-unification Shadow Hand config.
+                    # MEASURED 2026-08-20: dropping it does NOT reintroduce the divergence -- 160
+                    # iterations of handover on PhysX, no NaN, where the earlier solver regression
+                    # failed at iteration 3. But mean reward over iters 145-155 was 207 against the
+                    # baseline's 258, and one seed cannot separate that from noise (that run's own
+                    # spread was 153-254). Kept until a multi-seed comparison settles it.
+                    retain_accelerations=True,
                 ),
                 articulation_props=sim_utils.ArticulationRootPropertiesCfg(
                     enabled_self_collisions=True,
