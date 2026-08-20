@@ -18,6 +18,9 @@ Reference:
 
 import os
 
+from isaaclab_newton.sim.schemas import NewtonArticulationCfg
+from isaaclab_physx.sim.schemas import PhysxArticulationCfg
+
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
@@ -211,18 +214,21 @@ class ShadowHand:
                     # spread was 153-254). Kept until a multi-seed comparison settles it.
                     retain_accelerations=True,
                 ),
-                articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                    enabled_self_collisions=True,
-                    # PhysX only. MEASURED 2026-08-19: without these the hand diverges to
-                    # non-finite observations at iteration 49 (reorient) and 3 (handover),
-                    # reproducibly, while Allegro on the same backend trains clean. The
-                    # scene-level `min_position_iteration_count` clamp does NOT substitute --
-                    # a run with it produced a byte-identical log. Newton ignores them.
-                    solver_position_iteration_count=8,
-                    solver_velocity_iteration_count=0,
-                    sleep_threshold=0.005,
-                    stabilization_threshold=0.0005,
-                ),
+                articulation_props=[
+                    PhysxArticulationCfg(
+                        enabled_self_collisions=True,
+                        # MEASURED 2026-08-19: without these the hand diverges to non-finite
+                        # observations at iteration 49 (reorient) and 3 (handover), reproducibly,
+                        # while Allegro on the same backend trains clean. The scene-level
+                        # `min_position_iteration_count` clamp does NOT substitute -- a run with it
+                        # produced a byte-identical log.
+                        solver_position_iteration_count=8,
+                        solver_velocity_iteration_count=0,
+                        sleep_threshold=0.005,
+                        stabilization_threshold=0.0005,
+                    ),
+                    NewtonArticulationCfg(self_collision_enabled=True),
+                ],
             ),
             init_state=ArticulationCfg.InitialStateCfg(
                 pos=(0.0, 0.0, 0.5),
