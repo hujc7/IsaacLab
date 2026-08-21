@@ -172,11 +172,23 @@ class ShadowHand:
             "rh_(FF|MF|RF|LF)J2": 0.9,
             "rh_(FF|MF|RF|LF)J1": 0.7245,
         },
-        # These take no position command -- the tendon drives them -- so their stiffness and damping
-        # stay as the model authored them, which does survive import (None keeps the USD value).
-        # Armature and friction do not survive, so they are restated from the asset as above.
-        stiffness=None,
-        damping=None,
+        # These take no position command -- the tendon drives them -- so they carry the values the
+        # model authors. Restated explicitly rather than left at None: MEASURED 2026-08-21, the USD
+        # values survive import on PhysX (J2 0.105/0.021, J1 0.0224/0.0045) but land at 0.0 on
+        # Newton, so ``None`` means the two backends give the same joints different drives.
+        # Armature and friction do not survive on either, so they are restated from the asset above.
+        stiffness={
+            "rh_FFJ2": 0.1048,
+            "rh_MFJ2": 0.1051,
+            "rh_RFJ2": 0.1048,
+            "rh_LFJ2": 0.1043,
+            "rh_(FF|MF|RF|LF)J1": 0.0224,
+        },
+        damping={
+            "rh_(FF|MF|RF)J2": 0.021,
+            "rh_LFJ2": 0.0209,
+            "rh_(FF|MF|RF|LF)J1": 0.0045,
+        },
         armature=2.0e-4,
         friction=1.0e-2,
     )
