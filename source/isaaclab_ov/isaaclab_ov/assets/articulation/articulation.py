@@ -3185,9 +3185,9 @@ class Articulation(BaseArticulation):
         # step that flushes joint targets. ``set_fixed_tendon_offset_index`` writes immediately,
         # which is right for a property edit but wrong for a per-step command: it would make this
         # the only sim write outside that step.
-        self._buffer_fixed_tendon_offset_index(offset=offset, fixed_tendon_ids=fixed_tendon_ids, env_ids=env_ids)
+        self._stage_fixed_tendon_offset_index(offset=offset, fixed_tendon_ids=fixed_tendon_ids, env_ids=env_ids)
 
-    def _buffer_fixed_tendon_offset_index(
+    def _stage_fixed_tendon_offset_index(
         self,
         *,
         offset: float | torch.Tensor | wp.array,
@@ -3196,8 +3196,19 @@ class Articulation(BaseArticulation):
     ) -> tuple[wp.array, wp.array] | None:
         """Scatter fixed-tendon offsets into the cached buffer without touching the simulation.
 
-        Shared by the property setter, which pushes the buffer on to the simulation immediately, and
-        the per-step target command, which leaves that to :meth:`write_data_to_sim`.
+        Named ``_stage_`` rather than ``_buffer_`` because this class already spends *buffer* on
+        allocation (:meth:`_create_buffers`) and ``_push_`` on the write itself
+        (:meth:`_push_joint_property`); staging is the step between them.
+
+        This exists because the two callers need different halves of the same work.
+        :meth:`set_fixed_tendon_offset_index` is a property setter and writes eagerly, as every
+        property setter in this class does. :meth:`set_fixed_tendon_position_target_index` is a
+        per-step command, so it must leave the write to :meth:`write_data_to_sim` alongside the
+        joint targets rather than write once per decimation sub-step.
+
+        Returns:
+            The resolved ``(env_ids, sim_env_ids)`` pair the eager caller needs to push the buffer,
+            or ``None`` when the selection is empty and there is nothing to write.
 
         Returns:
             The resolved ``(env_ids, sim_env_ids)``, or ``None`` when the selection is empty.
@@ -3246,7 +3257,7 @@ class Articulation(BaseArticulation):
             fixed_tendon_ids: Fixed-tendon indices. Defaults to None (all fixed tendons).
             env_ids: Environment indices. Defaults to None (all environments).
         """
-        resolved = self._buffer_fixed_tendon_offset_index(
+        resolved = self._stage_fixed_tendon_offset_index(
             offset=offset, fixed_tendon_ids=fixed_tendon_ids, env_ids=env_ids
         )
         if resolved is None:
