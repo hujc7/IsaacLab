@@ -68,6 +68,8 @@ def _make_root_view_and_model(actuator_worlds=(0, 0, 0, 1, 1, 1), extra_actuator
         count=2,
         world_count=2,
         count_per_world=1,
+        # Newton derives these from the same labels; the module checks its rows name the same tendons.
+        tendon_names=["rh_FFJ0", "passive", "rh_LFJ0"],
         frequency_layouts={"mujoco:tendon": tendon_layout},
         # Newton applies the layout itself here; the module cross-checks its own addressing
         # against this read. Shape mirrors the view's (world_count, count_per_world, value_count).
@@ -99,6 +101,46 @@ def test_world_agnostic_actuator_drives_every_world():
 
     # World 1's tendons carry world-1 labels, so only world 0 falls back to the global actuators.
     np.testing.assert_array_equal(control_rows, [[1, -1, 2], [4, -1, 5]])
+
+
+def test_actuator_shared_between_worlds_is_rejected():
+    """Reject a world-agnostic actuator that every world falls back to.
+
+    One ``ctrl`` row cannot carry a per-environment target: the scatter would have every
+    environment write the same address, so they would silently drive each other's commands.
+    """
+    # No world-local tendon actuators at all, so both worlds resolve to the same global rows.
+    root_view, model = _make_root_view_and_model(actuator_worlds=(0, _GLOBAL_WORLD, _GLOBAL_WORLD, 0, 0, 0))
+    model.mujoco.actuator_target_label[4] = "/Robot/joint"
+    model.mujoco.actuator_target_label[5] = "/Robot/joint"
+
+    with pytest.raises(ValueError, match="drive more than one articulation instance"):
+        resolve_fixed_tendon_control_rows(root_view, model)
+
+
+def test_row_addressing_that_aliases_articulations_is_rejected():
+    """Reject a layout whose strides map two instances onto the same tendons.
+
+    Gathering a per-world value cannot catch this -- both reads agree precisely because the rows
+    are the same -- so distinctness is the only check that sees it.
+    """
+    root_view, model = _make_root_view_and_model()
+    root_view.frequency_layouts["mujoco:tendon"].stride_between_worlds = 0
+
+    with pytest.raises(RuntimeError, match="duplicate rows"):
+        resolve_fixed_tendon_control_rows(root_view, model)
+
+
+def test_rows_naming_other_tendons_are_rejected():
+    """Reject an offset error that stays in range and in-world.
+
+    ``tendon_world`` is constant within a world, so only the tendon's identity reveals this.
+    """
+    root_view, model = _make_root_view_and_model()
+    root_view.tendon_names = ["rh_FFJ0", "rh_MFJ0", "rh_LFJ0"]  # what the view believes it selected
+
+    with pytest.raises(RuntimeError, match="ArticulationView names"):
+        resolve_fixed_tendon_control_rows(root_view, model)
 
 
 def test_two_actuators_on_one_tendon_are_rejected():

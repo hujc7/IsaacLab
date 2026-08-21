@@ -212,6 +212,19 @@ def resolve_fixed_tendon_control_rows(root_view: ArticulationView, model: Model)
     commandable = control_rows >= 0
     if not np.all(commandable == commandable[0]):
         raise ValueError("MuJoCo direct tendon actuators differ between articulation instances.")
+
+    # A world-agnostic actuator (mujoco:actuator_world == -1, which is that attribute's default)
+    # matches every world's tendon, so each instance resolves to the SAME control row. One row
+    # cannot carry a per-environment target: the scatter would race and environments would drive
+    # each other's commands, silently. Reject the layout rather than pick a winner.
+    driven_rows = control_rows[commandable]
+    if len(np.unique(driven_rows)) != driven_rows.size:
+        shared = sorted({int(row) for row in driven_rows if (driven_rows == row).sum() > 1})
+        raise ValueError(
+            f"MuJoCo control rows {shared} drive more than one articulation instance, so a per-instance"
+            " tendon target cannot be expressed. Author one directly-controlled actuator per world"
+            " rather than a world-agnostic one."
+        )
     return control_rows
 
 
@@ -270,15 +283,43 @@ def _assert_rows_agree_with_view(
     """Check the row arithmetic above against Newton's own application of the same layout.
 
     :func:`_global_tendon_rows` restates addressing that :class:`~newton.selection.ArticulationView`
-    performs internally, and ``FrequencyLayout`` exposes no accessor to borrow instead. A drift
-    between the two would keep the rows in range and silently bind the wrong tendons, so compare a
-    tendon-frequency attribute gathered both ways: this function's rows, and the view's own strided
-    read of ``mujoco.tendon_world``.
+    performs internally, and ``FrequencyLayout`` exposes no accessor to borrow instead. Drift
+    between the two keeps the rows in range, so it binds the wrong tendons rather than raising.
+    Three independent checks, because no single one covers every way the arithmetic can slip:
+
+    * every row distinct -- a wrong ``stride_within_worlds`` aliases two articulations onto one
+      another's tendons, which no gathered value can reveal because both reads then agree;
+    * leaf names match :attr:`~newton.selection.ArticulationView.tendon_names` -- catches an
+      ``offset`` or ordering error inside a world, which a per-world value cannot;
+    * ``mujoco.tendon_world`` gathered both ways agrees -- catches drift across world boundaries.
+
+    Args:
+        root_view: Newton selection view for one articulation.
+        model: Newton model carrying the MuJoCo custom attributes.
+        tendon_rows: Model-global rows this module computed, shape ``(num_instances, num_tendons)``.
+        tendon_worlds: ``mujoco:tendon_world`` for every tendon in the model.
 
     Raises:
-        RuntimeError: If the two disagree, meaning this module's addressing no longer matches
-            Newton's.
+        RuntimeError: If any check fails, meaning this module's addressing no longer matches
+            Newton's and the rows would bind the wrong tendons.
     """
+    if len(np.unique(tendon_rows)) != tendon_rows.size:
+        raise RuntimeError(
+            "MuJoCo fixed-tendon row addressing produced duplicate rows, so two articulations share a"
+            " tendon. Newton's frequency-layout convention has changed and this module must be updated."
+        )
+
+    # The view derived its names from these same labels, so disagreement means the rows differ.
+    tendon_labels = [str(label) for label in model.mujoco.tendon_label]
+    view_names = list(root_view.tendon_names)
+    for instance_id, instance_rows in enumerate(tendon_rows):
+        names = [tendon_labels[row].rsplit("/", maxsplit=1)[-1] for row in instance_rows]
+        if names != view_names:
+            raise RuntimeError(
+                f"MuJoCo fixed-tendon rows for instance {instance_id} name {names}, but ArticulationView"
+                f" names {view_names}. This module's addressing no longer matches Newton's."
+            )
+
     view_tendon_worlds = _to_numpy(root_view.get_attribute("mujoco.tendon_world", model))
     if view_tendon_worlds.size != tendon_rows.size:
         raise RuntimeError(
