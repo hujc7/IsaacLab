@@ -52,34 +52,13 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      # Reuse the isaaclab-bot App already used by nightly-changelog.yml.
-      # Requesting the permissions explicitly makes a missing App permission
-      # fail here with a focused error instead of later at push or PR creation.
-      - uses: actions/create-github-app-token@v3
-        id: app-token
-        with:
-          client-id: ${{ secrets.CHANGELOG_APP_CLIENT_ID }}
-          private-key: ${{ secrets.CHANGELOG_APP_PRIVATE_KEY }}
-          permission-contents: write
-          permission-pull-requests: write
-          permission-workflows: write
 
       - uses: actions/checkout@v6
         with:
           ref: ${{ env.TARGET_BRANCH }}
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ secrets.FORK_TEST_TOKEN }}
           fetch-depth: 0
 
-      - name: Log in to the Isaac Sim registry
-        env:
-          NGC_API_KEY: ${{ secrets.NGC_API_KEY }}
-        run: |
-          set -euo pipefail
-          if [ -z "$NGC_API_KEY" ]; then
-            echo "::error::NGC_API_KEY is required to inspect the private Isaac Sim image."
-            exit 1
-          fi
-          printf '%s' "$NGC_API_KEY" | docker login -u '$oauthtoken' --password-stdin nvcr.io
 
       - name: Resolve and update the image digest
         id: pin
@@ -103,7 +82,7 @@ jobs:
             exit 1
           fi
 
-          digest=$(docker buildx imagetools inspect "$SOURCE_IMAGE:$SOURCE_TAG" --format '{{.Manifest.Digest}}')
+          digest="sha256:769450b03a4c634d709a0f5d4bf96e47bfaf025444b6e4728045b42733575e71"  # FORK TEST STUB
           digest=$(echo "$digest" | tr -d '[:space:]')
           if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "::error::Registry returned an invalid manifest digest: '$digest'."
@@ -156,8 +135,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          git config user.name "isaaclab-bot[bot]"
-          git config user.email "282401363+isaaclab-bot[bot]@users.noreply.github.com"
+          git config user.name "hujc7"
+          git config user.email "jichuanh@nvidia.com"
           git switch -C "$UPDATE_BRANCH"
           git add "$CONFIG_PATH"
           git commit -m "Bump Isaac Sim CI image digest"
@@ -177,7 +156,7 @@ jobs:
         id: pr
         if: ${{ steps.pin.outputs.changed == 'true' && !inputs.dry_run }}
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.FORK_TEST_TOKEN }}
           REPOSITORY: ${{ github.repository }}
           IMAGE: ${{ steps.pin.outputs.image }}
           CURRENT_PIN: ${{ steps.pin.outputs.current }}
@@ -237,7 +216,7 @@ jobs:
         if: ${{ steps.pin.outputs.branch_changed == 'true' && !inputs.dry_run }}
         with:
           pr-number: ${{ steps.pr.outputs.pr_number }}
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ secrets.FORK_TEST_TOKEN }}
           expected-head-sha: ${{ steps.push.outputs.head_sha }}
 
       - name: Report no-op or dry run
@@ -251,7 +230,3 @@ jobs:
           else
             echo "Dry run: would update \`$CURRENT_PIN\` to \`$CANDIDATE_PIN\`." >> "$GITHUB_STEP_SUMMARY"
           fi
-
-      - name: Log out of the Isaac Sim registry
-        if: ${{ always() }}
-        run: docker logout nvcr.io || true
