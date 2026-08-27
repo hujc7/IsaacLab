@@ -42,7 +42,7 @@ env:
   CONFIG_PATH: .github/workflows/config.yaml
   SOURCE_IMAGE: nvcr.io/0947644777160149/internal/isaac-sim
   SOURCE_TAG: latest-develop
-  TARGET_BRANCH: test-nightly-trigger
+  TARGET_BRANCH: develop
   UPDATE_BRANCH: ci/test-nightly-image-update
 
 jobs:
