@@ -8,8 +8,7 @@ description: >
   Starts build.yaml ("Docker + Tests") by toggling the ``ci:run-docker`` label,
   which is the only event that workflow triggers on. The token must be a GitHub
   App installation token; GitHub does not cascade GITHUB_TOKEN actions into new
-  workflow runs, so a label applied with GITHUB_TOKEN starts nothing. Requires a
-  prior checkout.
+  workflow runs, so a label applied with GITHUB_TOKEN starts nothing.
 
 inputs:
   pr-number:

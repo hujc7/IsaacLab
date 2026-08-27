@@ -212,7 +212,7 @@ jobs:
 
       # Gated on branch_changed so an unchanged open PR does not re-spend GPU
       # minutes every night.
-      - uses: ./.github/actions/request-docker-ci
+      - uses: $/.github/actions/request-docker-ci
         if: ${{ steps.pin.outputs.branch_changed == 'true' && !inputs.dry_run }}
         with:
           pr-number: ${{ steps.pr.outputs.pr_number }}
