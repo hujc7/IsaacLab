@@ -31,6 +31,7 @@ from isaaclab.envs.utils.io_descriptors import (
     export_articulations_data,
     export_scene_data,
 )
+from isaaclab.envs.utils.video_recorder import VideoRecorder
 from isaaclab.managers import RecorderManager
 from isaaclab.sim import SimulationContext
 from isaaclab.sim.utils import use_stage
@@ -80,14 +81,6 @@ class ManagerBasedEnvWarp:
         validate(cfg)
         # store inputs to class
         self.cfg = cfg
-        # Video recording is not supported on Warp environments.
-        if getattr(cfg, "video_recorders", None):
-            import logging as _logging
-
-            _logging.getLogger(__name__).warning(
-                "cfg.video_recorders is set but ManagerBasedEnvWarp does not support VideoRecorder. "
-                "No clips will be written. Use ManagerBasedEnv for video recording support."
-            )
         # initialize internal variables
         self._is_closed = False
         self._physics_handles_decimation = False
@@ -178,6 +171,8 @@ class ManagerBasedEnvWarp:
         # apply USD-related randomization events
         if "prestartup" in self.event_manager.available_modes:
             self.event_manager.apply(mode="prestartup")
+
+        self.video_recorders: list[VideoRecorder] = [VideoRecorder(cfg, self) for cfg in self.cfg.video_recorders]
 
         # play the simulator to activate physics handles
         # note: this activates the physics simulation view that exposes TensorAPIs
@@ -601,6 +596,10 @@ class ManagerBasedEnvWarp:
                 "EventManager_apply_interval", self.event_manager.stage_steps("apply_interval"), dt=self.step_dt
             )
 
+        # advance video recorders (after render, before obs)
+        for recorder in self.video_recorders:
+            recorder.step()
+
         # -- compute observations
         self.obs_buf = self._warp_graph_cache.call_steps(
             "ObservationManager_compute_update_history",
@@ -629,6 +628,10 @@ class ManagerBasedEnvWarp:
     def close(self):
         """Cleanup for the environment."""
         if not self._is_closed:
+            # flush any buffered video frames
+            for recorder in getattr(self, "video_recorders", []):
+                recorder.close()
+
             # destructor is order-sensitive
             del self.action_manager
             del self.observation_manager
