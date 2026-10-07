@@ -29,6 +29,7 @@ checkout/mount behavior rather than treating the cache as a complete source arti
 ```yaml
 - uses: ./.github/actions/docker-build
   env:
+    # Optional when CI provisioning already supplies usable runner file auth.
     NGC_API_KEY: ${{ secrets.NGC_API_KEY }}
   with:
     image-tag: isaac-lab-experiment:${{ github.sha }}-arm64
@@ -54,10 +55,19 @@ This shares full Docker images. It does not establish NGC support for the option
 
 1. Create an NGC organization/team container repository and set repository variable
    `ARM_CI_NGC_CACHE_REPOSITORY` to its untagged name, for example
-   `nvcr.io/<org>/<team>/isaac-lab-arm64-cache`. Configure `NGC_API_KEY` as a GitHub
-   Actions secret. Consumers need private-registry read permission on that namespace;
+   `nvcr.io/<org>/<team>/isaac-lab-arm64-cache`. Supply usable NGC file credentials
+   through CI provisioning in the Docker configuration of the same runner service
+   user that executes the job (normally `$HOME/.docker/config.json`). Alternatively,
+   provide optional `NGC_API_KEY` for trusted runs, for example through a GitHub
+   Actions secret. An empty GitHub secret does not remove runner-provisioned auth.
+   Confirm the provisioned registry URL and cache namespace access with CI operators;
+   generic private-registry provisioning alone does not establish NGC access.
+   Consumers need private-registry read permission on that namespace;
    a producer also needs write permission. Reading the public Sim base does not prove
    either permission. See the [NGC private registry guide](https://docs.nvidia.com/ngc/latest/ngc-private-registry-user-guide.html).
+   The action keeps anonymous public-base access separate from private-cache file
+   auth. Its owned config disables NGC credential helpers; helper-only NGC setups
+   need usable file auth or an explicitly supplied compatible `DOCKER_CONFIG`.
 2. Provision one LAN registry or explicitly managed registries on peer hosts. Set
    `ARM_CI_PEER_CACHE_REPOSITORIES` to newline-separated untagged repositories in
    preferred order. Use DNS names or IPv4 addresses, an optional port, and a repository

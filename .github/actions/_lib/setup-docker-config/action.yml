@@ -211,7 +211,10 @@ runs:
         fi
 
         echo "🟠 Configured credentials cannot read ${BASE_IMAGE_REF}; using anonymous access for nvcr.io"
-        if ! python3 "${STRIP_HELPER}" "${DOCKER_CONFIG_DIR}/config.json" "${BASE_IMAGE_REF}"; then
+        # Keep removed file auth inside our owned directory for private cache
+        # operations, without changing the anonymous config used by the build.
+        if ! python3 "${STRIP_HELPER}" "${DOCKER_CONFIG_DIR}/config.json" "${BASE_IMAGE_REF}" \
+            "${DOCKER_CONFIG_DIR}/ngc-cache-auth.json"; then
           echo "::warning::Could not drop the stored nvcr.io credential; the build may still fail to read ${BASE_IMAGE_REF}"
         fi
         # The stripping helper removes the NGC helper entry along with its

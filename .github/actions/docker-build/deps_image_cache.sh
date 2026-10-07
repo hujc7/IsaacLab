@@ -18,12 +18,34 @@ case "${TARGET_PLATFORM}" in linux/amd64|linux/arm64) ;; *) exit 2 ;; esac
 # the private dependency cache needs that credential without undoing the fallback.
 cache_config="$(mktemp -d)"
 trap 'rm -rf "$cache_config"' EXIT
-if [ -f "${DOCKER_CONFIG:-${HOME}/.docker}/config.json" ]; then
-  cp "${DOCKER_CONFIG:-${HOME}/.docker}/config.json" "${cache_config}/config.json"
+source_config="${DOCKER_CONFIG:-${HOME}/.docker}"
+if [ -f "${source_config}/config.json" ]; then
+  cp "${source_config}/config.json" "${cache_config}/config.json"
 else
   printf '{"auths":{}}\n' > "${cache_config}/config.json"
 fi
 chmod 600 "${cache_config}/config.json"
+# Only the setup owner can supply auth removed for anonymous base access.
+# Restore it in this isolated cache config when no key/current auth supersedes
+# it; never pick it up from a caller's external config or restore host helpers.
+if [ -z "${NGC_API_KEY:-}" ] && [ "${SETUP_DOCKER_CONFIG_OWNED:-}" = "$source_config" ] && \
+    [ -f "${source_config}/ngc-cache-auth.json" ]; then
+  python3 - "${source_config}/ngc-cache-auth.json" "${cache_config}/config.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1]) as handle:
+    saved = json.load(handle).get("auths") or {}
+with open(sys.argv[2]) as handle:
+    config = json.load(handle)
+auths = config.get("auths") or {}
+if not any(key.split("://", 1)[-1].split("/", 1)[0].partition(":")[0].lower() == "nvcr.io" for key in auths):
+    auths.update(saved)
+    config["auths"] = auths
+    with open(sys.argv[2], "w") as handle:
+        json.dump(config, handle)
+PY
+fi
 export DOCKER_CONFIG="${cache_config}"
 ngc_login_done=false
 ngc_login_failed=false
