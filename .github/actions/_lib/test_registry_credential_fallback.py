@@ -172,6 +172,57 @@ def test_initial_config_preserves_only_requested_peer_helpers(tmp_path: Path, gl
         shutil.rmtree(config_dir)
 
 
+def test_reused_owned_config_adds_peer_helpers_without_losing_earlier_routes(tmp_path: Path) -> None:
+    """Later cache users can add peer routes to an already prepared job config."""
+    initial = {
+        "credsStore": "host-store",
+        "credHelpers": {
+            "peer.example:5000": "peer-helper",
+            "file-peer.example:5002": "",
+            "nvcr.io": "ngc-helper",
+            "nvcr.io:443": "ngc-helper",
+            "unrequested.example:5003": "unrelated-helper",
+        },
+        "auths": {"nvcr.io": {"auth": "redacted"}},
+    }
+    stub = 'echo "config-only setup must not call Docker" >&2\nexit 1'
+    result = _run_setup(
+        tmp_path, "", stub, extra_env={"AUTHENTICATE_BASE_IMAGE": "false"}, initial_config=initial
+    )
+    exports = _setup_exports(tmp_path)
+    config_dir = Path(exports["DOCKER_CONFIG"])
+    try:
+        assert result.returncode == 0, result.stderr
+        config_path = config_dir / "config.json"
+        assert json.loads(config_path.read_text())["credHelpers"] == {"nvcr.io": ""}
+        env = exports | {
+            "AUTHENTICATE_BASE_IMAGE": "false",
+            "PEER_CACHE_REPOSITORIES": "peer.example:5000/team/cache",
+        }
+        result = _run_setup(tmp_path, "", stub, extra_env=env)
+        assert result.returncode == 0, result.stderr
+        assert json.loads(config_path.read_text())["credHelpers"] == {"nvcr.io": "", "peer.example:5000": "peer-helper"}
+
+        env["PEER_CACHE_REPOSITORIES"] = (
+            "global-peer.example:5001/team/cache\nfile-peer.example:5002/team/cache\n"
+            "nvcr.io/team/cache\nnvcr.io:443/team/cache"
+        )
+        result = _run_setup(tmp_path, "", stub, extra_env=env)
+        assert result.returncode == 0, result.stderr
+        config = json.loads(config_path.read_text())
+        assert config["credHelpers"] == {
+            "nvcr.io": "",
+            "peer.example:5000": "peer-helper",
+            "global-peer.example:5001": "host-store",
+            "file-peer.example:5002": "",
+        }
+        assert config["credsStore"] == ""
+        assert config["auths"] == initial["auths"]
+        assert json.loads((tmp_path / "home" / ".docker" / "config.json").read_text()) == initial
+    finally:
+        shutil.rmtree(config_dir)
+
+
 def test_config_only_setup_defers_authentication_then_authenticates_once(tmp_path: Path) -> None:
     """A failed NGC key cannot block config-only setup before a healthy peer read."""
     trace = tmp_path / "docker-calls"
@@ -295,10 +346,14 @@ def test_unowned_config_is_never_modified(tmp_path: Path) -> None:
         "nvcr.io/nvidia/isaac-sim:6.1.0",
         _DENY_UNLESS_ANONYMOUS,
         owned=False,
-        extra_env={"NGC_API_KEY": "fake-key-that-must-not-be-used"},
+        extra_env={
+            "NGC_API_KEY": "fake-key-that-must-not-be-used",
+            "PEER_CACHE_REPOSITORIES": "peer.example/team/cache",
+        },
     )
     assert result.returncode == 0, result.stderr
     assert _auths(tmp_path / "cfg" / "config.json") == {"nvcr.io", _ECR, _HUB}
+    assert "credHelpers" not in json.loads((tmp_path / "cfg" / "config.json").read_text())
 
 
 def test_already_checked_reference_is_not_probed_again(tmp_path: Path) -> None:

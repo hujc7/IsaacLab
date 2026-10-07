@@ -60,19 +60,37 @@ runs:
           DOCKER_CONFIG_DIR="${DOCKER_CONFIG}"
         else
           DOCKER_CONFIG_DIR=$(mktemp -d)
-          if [ -f "${HOME}/.docker/config.json" ]; then
-            python3 - "${HOME}/.docker/config.json" "${DOCKER_CONFIG_DIR}/config.json" <<'PY'
+          export DOCKER_CONFIG="${DOCKER_CONFIG_DIR}"
+          echo "DOCKER_CONFIG=${DOCKER_CONFIG_DIR}" >> "$GITHUB_ENV"
+          # Mark this directory as ours, so a later invocation only ever edits a
+          # config this action created and never the runner's persistent one.
+          echo "SETUP_DOCKER_CONFIG_OWNED=${DOCKER_CONFIG_DIR}" >> "$GITHUB_ENV"
+          SETUP_DOCKER_CONFIG_OWNED="${DOCKER_CONFIG_DIR}"
+        fi
+
+        # Later callers can request peers absent from the initial setup.
+        if [ "${SETUP_DOCKER_CONFIG_OWNED:-}" = "${DOCKER_CONFIG_DIR}" ]; then
+          python3 - "${HOME}/.docker/config.json" "${DOCKER_CONFIG_DIR}/config.json" <<'PY'
         import json
         import os
         import sys
 
-        with open(sys.argv[1]) as handle:
-            config = json.load(handle)
-        original_helpers = config.pop("credHelpers", {}) or {}
-        global_helper = config.get("credsStore") or ""
+        original = {}
+        if os.path.isfile(sys.argv[1]):
+            with open(sys.argv[1]) as handle:
+                original = json.load(handle)
+        if os.path.isfile(sys.argv[2]):
+            with open(sys.argv[2]) as handle:
+                config = json.load(handle)
+            peer_helpers = config.get("credHelpers") or {}
+        else:
+            config = original.copy()
+            peer_helpers = {}
+        original_helpers = original.get("credHelpers") or {}
+        global_helper = original.get("credsStore") or ""
         # An explicit empty NGC helper also prevents Docker from automatically
         # discovering a host credential store when the auth map is empty.
-        peer_helpers = {"nvcr.io": ""}
+        peer_helpers["nvcr.io"] = ""
         for repository in os.environ.get("PEER_CACHE_REPOSITORIES", "").splitlines():
             host, separator, _ = repository.strip().partition("/")
             if not separator or host.partition(":")[0].lower() == "nvcr.io":
@@ -86,16 +104,6 @@ runs:
         with open(sys.argv[2], "w") as handle:
             json.dump(config, handle)
         PY
-          else
-            echo '{"credsStore":"","credHelpers":{"nvcr.io":""}}' > "${DOCKER_CONFIG_DIR}/config.json"
-          fi
-          export DOCKER_CONFIG="${DOCKER_CONFIG_DIR}"
-          echo "DOCKER_CONFIG=${DOCKER_CONFIG_DIR}" >> "$GITHUB_ENV"
-          # Mark this directory as ours, so a later invocation only ever edits a
-          # config this action created and never the runner's persistent one.
-          echo "SETUP_DOCKER_CONFIG_OWNED=${DOCKER_CONFIG_DIR}" >> "$GITHUB_ENV"
-          SETUP_DOCKER_CONFIG_OWNED="${DOCKER_CONFIG_DIR}"
-
         fi
 
         if [ "${AUTHENTICATE_BASE_IMAGE:-true}" = false ]; then
