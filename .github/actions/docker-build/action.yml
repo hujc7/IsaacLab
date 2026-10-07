@@ -96,6 +96,10 @@ runs:
       uses: ./.github/actions/_lib/setup-docker-config
       with:
         base-image-ref: ${{ inputs.isaacsim-base-image }}:${{ inputs.isaacsim-version }}
+        authenticate-base-image: ${{ inputs.deps-cache-repositories == '' && inputs.deps-cache-publish-repositories == '' }}
+        peer-cache-repositories: |
+          ${{ inputs.deps-cache-repositories }}
+          ${{ inputs.deps-cache-publish-repositories }}
 
     ##### 2: Host disk snapshot (pre) #####
 
@@ -130,6 +134,9 @@ runs:
 
     - name: Check image locally
       id: local
+      # A commit/latest alias does not prove dependency identity. Producers must
+      # resolve the current deps-tag (or build) before publishing that identity.
+      if: inputs.deps-cache-publish-repositories == ''
       shell: bash
       run: |
         if docker image inspect "${{ inputs.image-tag }}" >/dev/null 2>&1; then
@@ -148,6 +155,17 @@ runs:
 
     ##### 4: Local deps-tag short-circuit #####
 
+    # Mutable base tags need authenticated manifest resolution for the hash.
+    # Digest-pinned cache consumers can look up local/peer images without NGC.
+    - name: Authenticate mutable base before computing cache identity
+      if: >
+        inputs.deps-hash == '' &&
+        (steps.local.outputs.hit != 'true' || inputs.deps-cache-publish-repositories != '') &&
+        !contains(inputs.isaacsim-version, '@sha256:') &&
+        (inputs.deps-cache-repositories != '' || inputs.deps-cache-publish-repositories != '')
+      uses: ./.github/actions/_lib/setup-docker-config
+      with:
+        base-image-ref: ${{ inputs.isaacsim-base-image }}:${{ inputs.isaacsim-version }}
     - name: Compute deps hash
       id: deps-hash
       if: >
@@ -194,6 +212,15 @@ runs:
       run: bash "${{ github.action_path }}/deps_image_cache.sh" pull
 
     ##### 5: Full build #####
+
+    - name: Authenticate base image before fallback build
+      if: >
+        steps.local.outputs.hit != 'true' && steps.local-deps.outputs.hit != 'true' &&
+        steps.remote-deps.outputs.hit != 'true' &&
+        (inputs.deps-cache-repositories != '' || inputs.deps-cache-publish-repositories != '')
+      uses: ./.github/actions/_lib/setup-docker-config
+      with:
+        base-image-ref: ${{ inputs.isaacsim-base-image }}:${{ inputs.isaacsim-version }}
 
     - name: Build image
       id: build

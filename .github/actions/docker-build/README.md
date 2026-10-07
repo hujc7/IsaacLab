@@ -18,6 +18,9 @@ Base-image authentication and dependency identity retain their existing owners.
 
 The `cache-source` output is `local-exact`, `local-deps`, the selected repository,
 or `build`. Registry tags are `deps-<hash>` using the existing dependency identity.
+With remote caching configured, digest-pinned consumers defer base authentication
+until a fallback build. Mutable base tags still need authenticated manifest resolution.
+Producers resolve the current dependency tag instead of trusting an exact local alias.
 Treat published tags as immutable in the registry's access policy: the action uses
 ordinary Docker tags and does not enforce registry-side immutability. Dependency
 images are shared across source commits; task consumers must retain the existing
