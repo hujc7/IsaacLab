@@ -262,14 +262,10 @@ runs:
         inputs.verify-test-path != '' &&
         steps.pull-exact.outputs.hit != 'true' &&
         steps.deps-cache.outputs.deps-cache-hit != 'true'
-      shell: bash
-      env:
-        IMAGE_TAG: ${{ inputs.image-tag }}
-        TEST_PATH: ${{ inputs.verify-test-path }}
-      run: |
-        set -euo pipefail
-        uv run --no-project --with pytest \
-          python -m pytest -q "${TEST_PATH}"
+      uses: ./.github/actions/_lib/verify-image
+      with:
+        image-tag: ${{ inputs.image-tag }}
+        test-path: ${{ inputs.verify-test-path }}
 
     - name: Tag built image with ECR-prefixed name
       if: >
