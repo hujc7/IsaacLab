@@ -5,7 +5,7 @@
 
 name: 'Setup docker config'
 description: >
-  Point DOCKER_CONFIG at a temp config with the credential helper disabled and
+  Point DOCKER_CONFIG at a temp config with the global credential helper disabled and
   log into nvcr.io. Shared by the docker-build and ecr-build-push-pull actions.
   Idempotent: re-invoking it in the same job reuses the existing config, and a
   base-image-ref already checked in this job is not probed again, so callers
@@ -15,6 +15,20 @@ description: >
   refused, falls back to anonymous access for that registry.
 
 inputs:
+  peer-cache-repositories:
+    description: >
+      Optional newline-separated peer cache repositories without tags. Preserve
+      their registry-specific credential helpers, or scope the original global
+      credential store to those hosts. nvcr.io is always excluded.
+    required: false
+    default: ''
+  authenticate-base-image:
+    description: >
+      When 'false', prepare the Docker config only and defer NGC authentication
+      and base-image probes. A later invocation with 'true' authenticates the
+      action-owned config once. Externally supplied configs are never logged into.
+    required: false
+    default: 'true'
   base-image-ref:
     description: >
       Optional "<image>:<tag>" that this job must be able to read. nvcr.io can
@@ -32,6 +46,8 @@ runs:
     - shell: bash
       env:
         BASE_IMAGE_REF: ${{ inputs.base-image-ref }}
+        PEER_CACHE_REPOSITORIES: ${{ inputs.peer-cache-repositories }}
+        AUTHENTICATE_BASE_IMAGE: ${{ inputs.authenticate-base-image }}
         STRIP_HELPER: ${{ github.action_path }}/strip_registry_auth.py
       run: |
         # The runner's credential helper backend is broken ("not implemented")
@@ -44,24 +60,72 @@ runs:
           DOCKER_CONFIG_DIR="${DOCKER_CONFIG}"
         else
           DOCKER_CONFIG_DIR=$(mktemp -d)
-          if [ -f "${HOME}/.docker/config.json" ]; then
-            python3 -c "import json; cfg=json.load(open('${HOME}/.docker/config.json')); cfg['credsStore']=''; cfg.pop('credHelpers',None); json.dump(cfg,open('${DOCKER_CONFIG_DIR}/config.json','w'))"
-          else
-            echo '{"credsStore":""}' > "${DOCKER_CONFIG_DIR}/config.json"
-          fi
           export DOCKER_CONFIG="${DOCKER_CONFIG_DIR}"
           echo "DOCKER_CONFIG=${DOCKER_CONFIG_DIR}" >> "$GITHUB_ENV"
           # Mark this directory as ours, so a later invocation only ever edits a
           # config this action created and never the runner's persistent one.
           echo "SETUP_DOCKER_CONFIG_OWNED=${DOCKER_CONFIG_DIR}" >> "$GITHUB_ENV"
           SETUP_DOCKER_CONFIG_OWNED="${DOCKER_CONFIG_DIR}"
+        fi
 
+        # Later callers can request peers absent from the initial setup.
+        if [ "${SETUP_DOCKER_CONFIG_OWNED:-}" = "${DOCKER_CONFIG_DIR}" ]; then
+          python3 - "${HOME}/.docker/config.json" "${DOCKER_CONFIG_DIR}/config.json" <<'PY'
+        import json
+        import os
+        import sys
+
+        original = {}
+        if os.path.isfile(sys.argv[1]):
+            with open(sys.argv[1]) as handle:
+                original = json.load(handle)
+        if os.path.isfile(sys.argv[2]):
+            with open(sys.argv[2]) as handle:
+                config = json.load(handle)
+            peer_helpers = config.get("credHelpers") or {}
+        else:
+            config = original.copy()
+            peer_helpers = {}
+        original_helpers = original.get("credHelpers") or {}
+        global_helper = original.get("credsStore") or ""
+        # An explicit empty NGC helper also prevents Docker from automatically
+        # discovering a host credential store when the auth map is empty.
+        peer_helpers["nvcr.io"] = ""
+        for repository in os.environ.get("PEER_CACHE_REPOSITORIES", "").splitlines():
+            host, separator, _ = repository.strip().partition("/")
+            if not separator or host.partition(":")[0].lower() == "nvcr.io":
+                continue
+            if host in original_helpers:
+                peer_helpers[host] = original_helpers[host]
+            elif global_helper:
+                peer_helpers[host] = global_helper
+        config["credsStore"] = ""
+        config["credHelpers"] = peer_helpers
+        with open(sys.argv[2], "w") as handle:
+            json.dump(config, handle)
+        PY
+        fi
+
+        if [ "${AUTHENTICATE_BASE_IMAGE:-true}" = false ]; then
+          exit 0
+        fi
+
+        # Config-only setup can precede a peer hit. Authenticate later only if
+        # the owning build/hash path needs the base image, and only once per
+        # action-owned config. Never write a caller-supplied config or helper.
+        if [ "${SETUP_DOCKER_CONFIG_OWNED:-}" = "${DOCKER_CONFIG_DIR}" ] && \
+            [ "${SETUP_DOCKER_CONFIG_AUTH_CHECKED:-}" != "${DOCKER_CONFIG_DIR}" ]; then
           if [ -n "${NGC_API_KEY:-}" ]; then
             echo "🔵 Logging into nvcr.io..."
-            printf '%s' "${NGC_API_KEY}" | docker login -u '$oauthtoken' --password-stdin nvcr.io
+            if ! printf '%s' "${NGC_API_KEY}" | timeout --kill-after=10s 30s \
+                docker login -u '$oauthtoken' --password-stdin nvcr.io; then
+              echo "::error::Required base-image NGC authentication failed."
+              exit 1
+            fi
           else
             echo "🟠 NGC_API_KEY not set - skipping nvcr.io login (normal for fork PRs)"
           fi
+          echo "SETUP_DOCKER_CONFIG_AUTH_CHECKED=${DOCKER_CONFIG_DIR}" >> "$GITHUB_ENV"
         fi
 
         if [ -z "${BASE_IMAGE_REF:-}" ]; then
@@ -124,7 +188,7 @@ runs:
 
         anon_config_dir="$(mktemp -d)"
         trap 'rm -f "${probe_err}"; rm -rf "${anon_config_dir}"' EXIT
-        echo '{"credsStore":"","auths":{}}' > "${anon_config_dir}/config.json"
+        echo '{"credsStore":"","credHelpers":{"nvcr.io":""},"auths":{}}' > "${anon_config_dir}/config.json"
         # Retried like the credentialed probe above: a transient failure here
         # would otherwise keep a credential already proven to be denied, and the
         # build would then fail on the very pull this fallback exists to rescue.
@@ -147,6 +211,24 @@ runs:
         fi
 
         echo "🟠 Configured credentials cannot read ${BASE_IMAGE_REF}; using anonymous access for nvcr.io"
-        if ! python3 "${STRIP_HELPER}" "${DOCKER_CONFIG_DIR}/config.json" "${BASE_IMAGE_REF}"; then
+        # Keep removed file auth inside our owned directory for private cache
+        # operations, without changing the anonymous config used by the build.
+        if ! python3 "${STRIP_HELPER}" "${DOCKER_CONFIG_DIR}/config.json" "${BASE_IMAGE_REF}" \
+            "${DOCKER_CONFIG_DIR}/ngc-cache-auth.json"; then
           echo "::warning::Could not drop the stored nvcr.io credential; the build may still fail to read ${BASE_IMAGE_REF}"
         fi
+        # The stripping helper removes the NGC helper entry along with its
+        # credential. Reinstate file storage so an empty auth map stays anonymous
+        # rather than rediscovering credentials from the runner's host store.
+        python3 - "${DOCKER_CONFIG_DIR}/config.json" <<'PY'
+        import json
+        import sys
+
+        with open(sys.argv[1]) as handle:
+            config = json.load(handle)
+        helpers = config.get("credHelpers") or {}
+        helpers["nvcr.io"] = ""
+        config["credHelpers"] = helpers
+        with open(sys.argv[1], "w") as handle:
+            json.dump(config, handle)
+        PY

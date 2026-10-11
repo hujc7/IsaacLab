@@ -1,0 +1,26 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+name: 'Verify Docker image'
+description: 'Run host pytest image contracts before publishing a dependency image.'
+
+inputs:
+  image-tag:
+    description: 'Locally available image to verify via IMAGE_TAG.'
+    required: true
+  test-path:
+    description: 'Host pytest path that asserts contracts against IMAGE_TAG.'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        IMAGE_TAG: ${{ inputs.image-tag }}
+        TEST_PATH: ${{ inputs.test-path }}
+      run: |
+        set -euo pipefail
+        uv run --no-project --with pytest python -m pytest -q "${TEST_PATH}"

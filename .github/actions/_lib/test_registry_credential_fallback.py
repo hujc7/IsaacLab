@@ -16,9 +16,11 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 _LIB_DIR = Path(__file__).resolve().parent
@@ -53,6 +55,10 @@ def _auths(path: Path) -> set[str]:
     return set((json.loads(path.read_text(encoding="utf-8")).get("auths") or {}).keys())
 
 
+def _setup_exports(tmp_path: Path) -> dict[str, str]:
+    return dict(line.split("=", 1) for line in (tmp_path / "github-env").read_text().splitlines())
+
+
 def _write_stub_docker(bin_dir: Path, body: str) -> None:
     bin_dir.mkdir(parents=True, exist_ok=True)
     script = bin_dir / "docker"
@@ -67,6 +73,7 @@ def _run_setup(
     *,
     owned: bool = True,
     extra_env: dict[str, str] | None = None,
+    initial_config: dict | None = None,
 ) -> subprocess.CompletedProcess:
     bin_dir = tmp_path / "bin"
     _write_stub_docker(bin_dir, stub)
@@ -87,8 +94,14 @@ def _run_setup(
         env["SETUP_DOCKER_CONFIG_OWNED"] = str(config_dir)
     if extra_env:
         env.update(extra_env)
+    if initial_config is not None:
+        caller_config = Path(env["HOME"]) / ".docker" / "config.json"
+        caller_config.parent.mkdir(parents=True)
+        caller_config.write_text(json.dumps(initial_config), encoding="utf-8")
+        env.pop("DOCKER_CONFIG", None)
+        env.pop("SETUP_DOCKER_CONFIG_OWNED", None)
     Path(env["GITHUB_ENV"]).touch()
-    return subprocess.run(["bash", str(body)], env=env, capture_output=True, text=True, check=False)
+    return subprocess.run(["bash", "-e", "-o", "pipefail", str(body)], env=env, capture_output=True, text=True, check=False)
 
 
 # A stub that refuses credentials but serves an anonymous config (empty auths).
@@ -107,6 +120,169 @@ def test_public_nvcr_drops_only_that_registry(tmp_path: Path) -> None:
     result = _run_setup(tmp_path, "nvcr.io/nvidia/isaac-sim:6.1.0", _DENY_UNLESS_ANONYMOUS)
     assert result.returncode == 0, result.stderr
     assert _auths(tmp_path / "cfg" / "config.json") == {_ECR, _HUB}
+
+
+@pytest.mark.parametrize("global_store, request_peers", [("host-store", True), ("", True), ("host-store", False)])
+def test_initial_config_preserves_only_requested_peer_helpers(tmp_path: Path, global_store: str, request_peers: bool) -> None:
+    """Peer credential routing survives initial setup and anonymous NGC fallback.
+
+    Explicit helper choices (including file storage) take precedence over an
+    inherited global store. Callers without peer caches keep the old defaults.
+    """
+    initial = {
+        "credsStore": global_store,
+        "credHelpers": {
+            "peer.example:5000": "peer-helper",
+            "file-peer.example:5002": "",
+            "nvcr.io": "ngc-helper",
+            "nvcr.io:443": "ngc-helper",
+            "unrequested.example:5003": "unrelated-helper",
+        },
+        "auths": {name: {"auth": "redacted"} for name in ["nvcr.io", _ECR, _HUB]},
+    }
+    repositories = (
+        "peer.example:5000/team/cache\n"
+        "global-peer.example:5001/team/cache\n"
+        "file-peer.example:5002/team/cache\n"
+        "nvcr.io/team/cache\n"
+        "nvcr.io:443/team/cache\n"
+    )
+    result = _run_setup(
+        tmp_path,
+        "nvcr.io/nvidia/isaac-sim:6.1.0",
+        _DENY_UNLESS_ANONYMOUS,
+        extra_env={"PEER_CACHE_REPOSITORIES": repositories if request_peers else ""},
+        initial_config=initial,
+    )
+    assert result.returncode == 0, result.stderr
+    config_dir = Path(_setup_exports(tmp_path)["DOCKER_CONFIG"])
+    try:
+        config = json.loads((config_dir / "config.json").read_text())
+        expected = {"nvcr.io": ""}
+        if request_peers:
+            expected.update({"peer.example:5000": "peer-helper", "file-peer.example:5002": ""})
+            if global_store:
+                expected["global-peer.example:5001"] = global_store
+        assert config.get("credHelpers", {}) == expected
+        assert config["credsStore"] == ""
+        assert set(config["auths"]) == {_ECR, _HUB}
+        caller_config = tmp_path / "home" / ".docker" / "config.json"
+        assert json.loads(caller_config.read_text()) == initial
+    finally:
+        shutil.rmtree(config_dir)
+
+
+def test_reused_owned_config_adds_peer_helpers_without_losing_earlier_routes(tmp_path: Path) -> None:
+    """Later cache users can add peer routes to an already prepared job config."""
+    initial = {
+        "credsStore": "host-store",
+        "credHelpers": {
+            "peer.example:5000": "peer-helper",
+            "file-peer.example:5002": "",
+            "nvcr.io": "ngc-helper",
+            "nvcr.io:443": "ngc-helper",
+            "unrequested.example:5003": "unrelated-helper",
+        },
+        "auths": {"nvcr.io": {"auth": "redacted"}},
+    }
+    stub = 'echo "config-only setup must not call Docker" >&2\nexit 1'
+    result = _run_setup(
+        tmp_path, "", stub, extra_env={"AUTHENTICATE_BASE_IMAGE": "false"}, initial_config=initial
+    )
+    exports = _setup_exports(tmp_path)
+    config_dir = Path(exports["DOCKER_CONFIG"])
+    try:
+        assert result.returncode == 0, result.stderr
+        config_path = config_dir / "config.json"
+        assert json.loads(config_path.read_text())["credHelpers"] == {"nvcr.io": ""}
+        env = exports | {
+            "AUTHENTICATE_BASE_IMAGE": "false",
+            "PEER_CACHE_REPOSITORIES": "peer.example:5000/team/cache",
+        }
+        result = _run_setup(tmp_path, "", stub, extra_env=env)
+        assert result.returncode == 0, result.stderr
+        assert json.loads(config_path.read_text())["credHelpers"] == {"nvcr.io": "", "peer.example:5000": "peer-helper"}
+
+        env["PEER_CACHE_REPOSITORIES"] = (
+            "global-peer.example:5001/team/cache\nfile-peer.example:5002/team/cache\n"
+            "nvcr.io/team/cache\nnvcr.io:443/team/cache"
+        )
+        result = _run_setup(tmp_path, "", stub, extra_env=env)
+        assert result.returncode == 0, result.stderr
+        config = json.loads(config_path.read_text())
+        assert config["credHelpers"] == {
+            "nvcr.io": "",
+            "peer.example:5000": "peer-helper",
+            "global-peer.example:5001": "host-store",
+            "file-peer.example:5002": "",
+        }
+        assert config["credsStore"] == ""
+        assert config["auths"] == initial["auths"]
+        assert json.loads((tmp_path / "home" / ".docker" / "config.json").read_text()) == initial
+    finally:
+        shutil.rmtree(config_dir)
+
+
+def test_config_only_setup_defers_authentication_then_authenticates_once(tmp_path: Path) -> None:
+    """A failed NGC key cannot block config-only setup before a healthy peer read."""
+    trace = tmp_path / "docker-calls"
+    stub = """
+printf '%s\n' "$1" >> "$DOCKER_CALLS"
+if [ "$1" = login ]; then
+  cat >/dev/null
+  [ "$FAIL_LOGIN" != true ]
+  exit $?
+fi
+echo "unexpected registry probe" >&2
+exit 1
+"""
+    env = {
+        "NGC_API_KEY": "fake-key-for-deferred-auth-test",
+        "AUTHENTICATE_BASE_IMAGE": "false",
+        "PEER_CACHE_REPOSITORIES": "peer.example/team/cache",
+        "DOCKER_CONFIG": "",
+        "DOCKER_CALLS": str(trace),
+        "FAIL_LOGIN": "true",
+    }
+    result = _run_setup(
+        tmp_path,
+        "nvcr.io/nvidia/isaac-sim:6.1.0",
+        stub,
+        extra_env=env,
+    )
+    exports = _setup_exports(tmp_path)
+    config_dir = Path(exports["DOCKER_CONFIG"])
+    try:
+        assert result.returncode == 0, result.stderr
+        assert not trace.exists()
+        assert "SETUP_DOCKER_CONFIG_AUTH_CHECKED" not in exports
+        assert "SETUP_DOCKER_CONFIG_CHECKED_REF" not in exports
+        assert json.loads((config_dir / "config.json").read_text())["credHelpers"] == {"nvcr.io": ""}
+
+        # Later base-image work really needs authentication. A failed login
+        # fails this invocation and must not mark the config authenticated.
+        env.update(exports)
+        env["AUTHENTICATE_BASE_IMAGE"] = "true"
+        failed = _run_setup(tmp_path, "", stub, extra_env=env)
+        assert failed.returncode != 0
+        assert "SETUP_DOCKER_CONFIG_AUTH_CHECKED" not in _setup_exports(tmp_path)
+
+        env["FAIL_LOGIN"] = "false"
+        authenticated = _run_setup(tmp_path, "", stub, extra_env=env)
+        assert authenticated.returncode == 0, authenticated.stderr
+        exports = _setup_exports(tmp_path)
+        assert exports["SETUP_DOCKER_CONFIG_AUTH_CHECKED"] == str(config_dir)
+        assert trace.read_text().splitlines() == ["login", "login"]
+
+        # Another build action in this job inherits the marker and skips login,
+        # even if that backend would now fail.
+        env.update(exports)
+        env["FAIL_LOGIN"] = "true"
+        reused = _run_setup(tmp_path, "", stub, extra_env=env)
+        assert reused.returncode == 0, reused.stderr
+        assert trace.read_text().splitlines() == ["login", "login"]
+    finally:
+        shutil.rmtree(config_dir)
 
 
 def test_non_nvcr_reference_is_left_alone(tmp_path: Path) -> None:
@@ -165,9 +341,19 @@ exit 1
 
 def test_unowned_config_is_never_modified(tmp_path: Path) -> None:
     """A config this action did not create belongs to the runner and stays intact."""
-    result = _run_setup(tmp_path, "nvcr.io/nvidia/isaac-sim:6.1.0", _DENY_UNLESS_ANONYMOUS, owned=False)
+    result = _run_setup(
+        tmp_path,
+        "nvcr.io/nvidia/isaac-sim:6.1.0",
+        _DENY_UNLESS_ANONYMOUS,
+        owned=False,
+        extra_env={
+            "NGC_API_KEY": "fake-key-that-must-not-be-used",
+            "PEER_CACHE_REPOSITORIES": "peer.example/team/cache",
+        },
+    )
     assert result.returncode == 0, result.stderr
     assert _auths(tmp_path / "cfg" / "config.json") == {"nvcr.io", _ECR, _HUB}
+    assert "credHelpers" not in json.loads((tmp_path / "cfg" / "config.json").read_text())
 
 
 def test_already_checked_reference_is_not_probed_again(tmp_path: Path) -> None:

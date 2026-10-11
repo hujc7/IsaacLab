@@ -1,0 +1,132 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+name: ARM Image Cache Prototype
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner-label:
+        description: 'Runner label (arm64 pool, or one Spark label for repeatable measurements)'
+        type: string
+        default: arm64
+      cache-source:
+        description: 'Remote fallback after local cache (repositories come from repository variables)'
+        type: choice
+        options: [peer-then-ngc, ngc, local]
+        default: peer-then-ngc
+      publish:
+        description: 'Publish verified image to configured repositories (trusted producer only)'
+        type: boolean
+        default: false
+      transfer-timeout:
+        description: 'Maximum seconds per remote pull/push'
+        type: string
+        default: '600'
+
+permissions:
+  contents: read
+
+# Avoid simultaneous producer writes. Production CI is unchanged by this manual experiment.
+concurrency:
+  group: arm-image-cache-prototype
+  cancel-in-progress: false
+
+jobs:
+  image-cache:
+    runs-on: [self-hosted, '${{ inputs.runner-label }}']
+    timeout-minutes: 60
+    env:
+      NGC_API_KEY: ${{ secrets.NGC_API_KEY }}
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 1
+        lfs: true
+    - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6.8.0
+    - name: Record runner and image-setup start
+      id: start
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "$(uname -m)" = aarch64
+        echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+        {
+          echo "Runner: ${RUNNER_NAME}; host: $(hostname); commit: ${GITHUB_SHA}"
+          nvidia-smi --query-gpu=name,driver_version --format=csv,noheader
+          docker info --format 'Docker storage: {{.Driver}}'
+        } | tee -a "$GITHUB_STEP_SUMMARY"
+    - name: Read shared base image pins and cache repositories
+      id: config
+      shell: bash
+      env:
+        CACHE_SOURCE: ${{ inputs.cache-source }}
+        PUBLISH: ${{ inputs.publish }}
+        NGC_REPOSITORY: ${{ vars.ARM_CI_NGC_CACHE_REPOSITORY }}
+        PEER_REPOSITORIES: ${{ vars.ARM_CI_PEER_CACHE_REPOSITORIES }}
+      run: |
+        set -euo pipefail
+        uv run --no-project --with pyyaml python - <<'PY'
+        import os
+        from pathlib import Path
+        import yaml
+
+        config = yaml.safe_load(Path('.github/workflows/config.yaml').read_text())
+        with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+            for key in ('isaacsim_image_name', 'isaacsim_image_tag'):
+                print(f'{key}={config[key]}', file=output)
+        PY
+        repositories=""
+        if [ "$CACHE_SOURCE" = peer-then-ngc ]; then
+          repositories="$PEER_REPOSITORIES"
+        fi
+        if [ "$CACHE_SOURCE" != local ] && [ -n "$NGC_REPOSITORY" ]; then
+          repositories="${repositories}${repositories:+$'\n'}${NGC_REPOSITORY}"
+        fi
+        if [ "$CACHE_SOURCE" != local ] && [ -z "$repositories" ]; then
+          echo "::error::Configure ARM_CI_NGC_CACHE_REPOSITORY or ARM_CI_PEER_CACHE_REPOSITORIES first."
+          exit 1
+        fi
+        if [ "$PUBLISH" = true ] && [ -z "$repositories" ]; then
+          echo "::error::Publication needs at least one remote repository."
+          exit 1
+        fi
+        delimiter="cache-$(cat /proc/sys/kernel/random/uuid)"
+        {
+          echo "repositories<<${delimiter}"
+          printf '%s\n' "$repositories"
+          echo "$delimiter"
+          if [ "$PUBLISH" = true ]; then
+            echo "publish-repositories<<${delimiter}"
+            printf '%s\n' "$repositories"
+            echo "$delimiter"
+          fi
+        } >> "$GITHUB_OUTPUT"
+    - name: Build or pull ARM dependency image
+      id: image
+      uses: ./.github/actions/docker-build
+      with:
+        image-tag: isaac-lab-cache-prototype:${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-arm64
+        isaacsim-base-image: ${{ steps.config.outputs.isaacsim_image_name }}
+        isaacsim-version: ${{ steps.config.outputs.isaacsim_image_tag }}
+        platform: linux/arm64
+        deps-cache-repositories: ${{ steps.config.outputs.repositories }}
+        deps-cache-publish-repositories: ${{ steps.config.outputs.publish-repositories }}
+        deps-cache-timeout: ${{ inputs.transfer-timeout }}
+        verify-test-path: docker/test/test_image_invariants.py
+    - name: Verify consumer image too
+      if: steps.image.outputs.cache-source != 'build' && !inputs.publish
+      uses: ./.github/actions/_lib/verify-image
+      with:
+        image-tag: isaac-lab-cache-prototype:${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-arm64
+        test-path: docker/test/test_image_invariants.py
+    - name: Report image-setup time
+      shell: bash
+      env:
+        START_EPOCH: ${{ steps.start.outputs.epoch }}
+        CACHE_SOURCE: ${{ steps.image.outputs.cache-source }}
+      run: |
+        elapsed=$(( $(date +%s) - START_EPOCH ))
+        echo "Verified image setup: ${elapsed}s; source: ${CACHE_SOURCE}" | tee -a "$GITHUB_STEP_SUMMARY"

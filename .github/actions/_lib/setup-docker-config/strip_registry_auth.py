@@ -11,13 +11,16 @@ makes a public base image unreadable. Removing just that registry's entry lets
 the pull proceed anonymously while every other registry in the same config
 keeps working.
 
-Usage: strip_registry_auth.py <config.json> <image-ref>
+Usage: strip_registry_auth.py <config.json> <image-ref> [removed-auth.json]
+The optional file preserves removed inline auth for isolated cache operations;
+credential helpers are never preserved there.
 Exits 0 when a credential was dropped, 3 when nothing matched.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 
 # Docker Hub is stored under several spellings; treat them as one registry.
@@ -79,6 +82,11 @@ def main(argv):
     if not removed and not helper_keys:
         print(f"No stored credential for {target} was found in the docker config")
         return 3
+
+    if len(argv) > 3:
+        descriptor = os.open(argv[3], os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "w") as handle:
+            json.dump({"auths": {key: auths[key] for key in removed}}, handle)
 
     for key in removed:
         del auths[key]

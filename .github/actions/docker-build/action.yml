@@ -56,6 +56,35 @@ inputs:
       runners. Default 'false' — no implicit cleanup.
     default: 'false'
     required: false
+  deps-cache-repositories:
+    description: >
+      Optional newline-separated registry repositories, without tags. On a local
+      miss, try each deps-<hash> image in order (e.g. LAN peers before NGC).
+      Failed pulls fall back to the next repository, then a local build.
+    default: ''
+    required: false
+  deps-cache-publish-repositories:
+    description: >
+      Optional newline-separated repositories to publish the verified dependency
+      image to. Explicit opt-in; a failed verification or push fails the action.
+      Requires verify-test-path and registry write credentials.
+    default: ''
+    required: false
+  deps-cache-timeout:
+    description: 'Maximum seconds per registry pull or push, including Docker retries.'
+    default: '600'
+    required: false
+  verify-test-path:
+    description: >
+      Host pytest path run with IMAGE_TAG set before tagging a fresh build or
+      publishing any image. Required when publication is requested.
+    default: ''
+    required: false
+
+outputs:
+  cache-source:
+    description: 'local-exact, local-deps, registry repository, or build'
+    value: ${{ steps.source.outputs.source }}
 
 runs:
   using: composite
@@ -67,6 +96,10 @@ runs:
       uses: ./.github/actions/_lib/setup-docker-config
       with:
         base-image-ref: ${{ inputs.isaacsim-base-image }}:${{ inputs.isaacsim-version }}
+        authenticate-base-image: ${{ inputs.deps-cache-repositories == '' && inputs.deps-cache-publish-repositories == '' }}
+        peer-cache-repositories: |
+          ${{ inputs.deps-cache-repositories }}
+          ${{ inputs.deps-cache-publish-repositories }}
 
     ##### 2: Host disk snapshot (pre) #####
 
@@ -101,6 +134,9 @@ runs:
 
     - name: Check image locally
       id: local
+      # A commit/latest alias does not prove dependency identity. Producers must
+      # resolve the current deps-tag (or build) before publishing that identity.
+      if: inputs.deps-cache-publish-repositories == ''
       shell: bash
       run: |
         if docker image inspect "${{ inputs.image-tag }}" >/dev/null 2>&1; then
@@ -110,11 +146,31 @@ runs:
           echo "🔵 Image not present locally, will check deps-cache / build"
         fi
 
+    - name: Validate dependency-cache publication
+      if: inputs.deps-cache-publish-repositories != '' && inputs.verify-test-path == ''
+      shell: bash
+      run: |
+        echo "::error::Dependency-cache publication requires verify-test-path."
+        exit 1
+
     ##### 4: Local deps-tag short-circuit #####
 
+    # Mutable base tags need authenticated manifest resolution for the hash.
+    # Digest-pinned cache consumers can look up local/peer images without NGC.
+    - name: Authenticate mutable base before computing cache identity
+      if: >
+        inputs.deps-hash == '' &&
+        (steps.local.outputs.hit != 'true' || inputs.deps-cache-publish-repositories != '') &&
+        !contains(inputs.isaacsim-version, '@sha256:') &&
+        (inputs.deps-cache-repositories != '' || inputs.deps-cache-publish-repositories != '')
+      uses: ./.github/actions/_lib/setup-docker-config
+      with:
+        base-image-ref: ${{ inputs.isaacsim-base-image }}:${{ inputs.isaacsim-version }}
     - name: Compute deps hash
       id: deps-hash
-      if: steps.local.outputs.hit != 'true' && inputs.deps-hash == ''
+      if: >
+        inputs.deps-hash == '' &&
+        (steps.local.outputs.hit != 'true' || inputs.deps-cache-publish-repositories != '')
       uses: ./.github/actions/_lib/compute-deps-hash
       with:
         dockerfile-path: ${{ inputs.dockerfile-path }}
@@ -141,13 +197,37 @@ runs:
           echo "🟠 Local deps-cache MISS (will build then tag for future hits)"
         fi
 
+    - name: Pull dependency image from peers or registry
+      id: remote-deps
+      if: >
+        steps.local.outputs.hit != 'true' && steps.local-deps.outputs.hit != 'true' &&
+        inputs.deps-cache-repositories != ''
+      shell: bash
+      env:
+        IMAGE_TAG: ${{ inputs.image-tag }}
+        DEPS_HASH: ${{ inputs.deps-hash || steps.deps-hash.outputs.hash }}
+        TARGET_PLATFORM: ${{ inputs.platform }}
+        CACHE_REPOSITORIES: ${{ inputs.deps-cache-repositories }}
+        CACHE_TIMEOUT: ${{ inputs.deps-cache-timeout }}
+      run: bash "${{ github.action_path }}/deps_image_cache.sh" pull
+
     ##### 5: Full build #####
+
+    - name: Authenticate base image before fallback build
+      if: >
+        steps.local.outputs.hit != 'true' && steps.local-deps.outputs.hit != 'true' &&
+        steps.remote-deps.outputs.hit != 'true' &&
+        (inputs.deps-cache-repositories != '' || inputs.deps-cache-publish-repositories != '')
+      uses: ./.github/actions/_lib/setup-docker-config
+      with:
+        base-image-ref: ${{ inputs.isaacsim-base-image }}:${{ inputs.isaacsim-version }}
 
     - name: Build image
       id: build
       if: >
         steps.local.outputs.hit != 'true' &&
-        steps.local-deps.outputs.hit != 'true'
+        steps.local-deps.outputs.hit != 'true' &&
+        steps.remote-deps.outputs.hit != 'true'
       shell: bash
       run: |
         BUILD_ARGS=(
@@ -205,13 +285,22 @@ runs:
         USER ${IMAGE_USER}
         DOCKERFILE
 
-    ##### 7: Tag built image with local deps-tag #####
+    - name: Verify image before caching or publication
+      if: >
+        inputs.verify-test-path != '' &&
+        (steps.build.outputs.was-built == 'true' || inputs.deps-cache-publish-repositories != '')
+      uses: ./.github/actions/_lib/verify-image
+      with:
+        image-tag: ${{ inputs.image-tag }}
+        test-path: ${{ inputs.verify-test-path }}
 
-    # Runs only when a real build happened (not on cache hits). Populates the
-    # deps-tag so the next build with identical deps short-circuits at step 4.
+    ##### 7: Retain built or pulled image with local deps-tag #####
+
+    # Populate the deps-tag after a build or remote hit so the next run with
+    # identical deps short-circuits locally at step 4.
 
     - name: Tag built image with local deps-tag
-      if: steps.build.outputs.was-built == 'true'
+      if: steps.build.outputs.was-built == 'true' || steps.remote-deps.outputs.hit == 'true'
       shell: bash
       run: |
         if [ -n "${LOCAL_DEPS_TAG:-}" ]; then
@@ -220,6 +309,34 @@ runs:
         else
           echo "🟠 LOCAL_DEPS_TAG not set, skipping local deps-cache tag"
         fi
+
+    - name: Publish verified dependency image
+      if: inputs.deps-cache-publish-repositories != ''
+      shell: bash
+      env:
+        IMAGE_TAG: ${{ inputs.image-tag }}
+        DEPS_HASH: ${{ inputs.deps-hash || steps.deps-hash.outputs.hash }}
+        TARGET_PLATFORM: ${{ inputs.platform }}
+        CACHE_REPOSITORIES: ${{ inputs.deps-cache-publish-repositories }}
+        CACHE_TIMEOUT: ${{ inputs.deps-cache-timeout }}
+      run: bash "${{ github.action_path }}/deps_image_cache.sh" push
+
+    - name: Report image source
+      id: source
+      shell: bash
+      env:
+        LOCAL_HIT: ${{ steps.local.outputs.hit }}
+        LOCAL_DEPS_HIT: ${{ steps.local-deps.outputs.hit }}
+        REMOTE_SOURCE: ${{ steps.remote-deps.outputs.source }}
+      run: |
+        source="${REMOTE_SOURCE:-build}"
+        if [ "${LOCAL_HIT}" = "true" ]; then
+          source=local-exact
+        elif [ "${LOCAL_DEPS_HIT}" = "true" ]; then
+          source=local-deps
+        fi
+        echo "source=${source}" >> "$GITHUB_OUTPUT"
+        echo "Dependency image source: ${source}" | tee -a "$GITHUB_STEP_SUMMARY"
 
     ##### 8: Evict stale local deps-cache tags (>14d) — opt-in #####
 
