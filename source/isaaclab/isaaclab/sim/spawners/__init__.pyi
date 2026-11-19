@@ -17,6 +17,7 @@ __all__ = [
     "MeshFileCfg",
     "MjcfFileCfg",
     "UrdfFileCfg",
+    "TransformerCfg",
     "UsdFileCfg",
     "UsdFileWithCompliantContactCfg",
     "spawn_light",
@@ -94,6 +95,7 @@ from .from_files import (
     MeshFileCfg,
     MjcfFileCfg,
     UrdfFileCfg,
+    TransformerCfg,
     UsdFileCfg,
     UsdFileWithCompliantContactCfg,
 )

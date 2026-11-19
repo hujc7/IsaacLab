@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import MISSING
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
@@ -240,6 +240,21 @@ class FileCfg(RigidObjectSpawnerCfg, DeformableObjectSpawnerCfg):
 
 
 @configclass
+class TransformerCfg:
+    """Select an Asset Transformer profile to run on a USD file before spawning.
+
+    The ``relocate_rigid_body_to_root`` profile moves a standalone object's single rigid body onto the
+    asset's default prim so files with different body paths can share a physics view. It preserves the
+    collider hierarchy and re-expresses the body's center of mass and principal axes in the root frame.
+    The input must supply a default prim and contain exactly one rigid body below or on it. The
+    profile is for standalone rigid objects and requires the subtree to be free of joints and articulations.
+    """
+
+    profile: Literal["relocate_rigid_body_to_root"] = MISSING
+    """Name of the profile to execute."""
+
+
+@configclass
 class UsdFileCfg(FileCfg):
     """USD file to spawn asset from.
 
@@ -289,15 +304,12 @@ class UsdFileCfg(FileCfg):
     Please check the :meth:`~isaaclab.sim.utils.make_uninstanceable` function for more information.
     """
 
-    move_rigid_body_to_root: bool = False
-    """Whether to move the file's single rigid body onto the spawned prim. Defaults to False.
+    transformer: TransformerCfg | None = None
+    """Optional Asset Transformer profile to run before referencing a new asset.
 
-    Enable this option when the file nests its rigid body at a file-specific path and is spawned
-    with other files through :class:`~isaaclab.sim.spawners.wrappers.MultiAssetSpawnerCfg`, which
-    needs every file to hold its body at the same path. The move happens before the rigid-body,
-    mass, and collision overrides are applied.
-
-    Please check the :func:`~isaaclab.sim.utils.move_rigid_body_to_root` function for more information.
+    The profile runs on a temporary package with :attr:`variants` and :attr:`make_uninstanceable`
+    applied before relocation. The source USD is left intact. Runtime USD references to the package
+    remain valid for the lifetime of the process. Standalone use requires the ``importers`` extra.
     """
 
 
