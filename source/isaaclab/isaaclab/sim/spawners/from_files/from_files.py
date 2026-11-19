@@ -26,7 +26,6 @@ from ...utils import (
     get_first_matching_child_prim,
     has_deformable_body_api,
     make_uninstanceable,
-    move_rigid_body_to_root,
     select_usd_variants,
     set_prim_visibility,
 )
@@ -685,9 +684,15 @@ def spawn_from_usd_file(
         lock = FileLock(os.path.join(tempfile.gettempdir(), "isaaclab_usd_spawn.lock"))
     else:
         lock = nullcontext()
+    from . import from_files_cfg  # noqa: PLC0415
+
     with lock:
         stage = get_current_stage()
         if not stage.GetPrimAtPath(prim_path).IsValid():
+            if isinstance(cfg, from_files_cfg.UsdFileCfg) and cfg.transformer is not None:
+                from .asset_transformer import transform_usd  # noqa: PLC0415
+
+                usd_path = transform_usd(usd_path, cfg, stage)
             create_prim(
                 prim_path,
                 usd_path=usd_path,
@@ -699,19 +704,14 @@ def spawn_from_usd_file(
         else:
             logger.warning(f"A prim already exists at prim path: '{prim_path}'.")
 
-    from . import from_files_cfg  # noqa: PLC0415
-
     # variant selection and instancing overrides only exist on USD file spawners
     if isinstance(cfg, from_files_cfg.UsdFileCfg):
         # modify variants
-        if cfg.variants is not None:
+        if cfg.variants is not None and cfg.transformer is None:
             select_usd_variants(prim_path, cfg.variants)
         # make instance proxies editable before any override tries to author properties on them
         if cfg.make_uninstanceable:
             make_uninstanceable(prim_path, stage=stage)
-        # TODO: Consider a generic asset reorganization mechanism for ill-formed assets in place of this option.
-        if cfg.move_rigid_body_to_root:
-            move_rigid_body_to_root(prim_path, stage=stage)
 
     # author the deformable dict slot first so any collision_props keyed to the created sim mesh
     # (e.g. {"/sim_mesh": [...]}) can match it in _apply_body_schema_properties below

@@ -23,6 +23,7 @@ from isaaclab.test.utils import launch_test_simulation
 
 launch_test_simulation(SimulationCfg(physics=NewtonCfg()))
 
+import json
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -310,14 +311,23 @@ def _nested_body_usd(directory: Path, name: str, mass: float) -> str:
     return path
 
 
-def test_files_with_differently_nested_bodies_share_one_view(tmp_path: Path) -> None:
+def test_files_with_differently_nested_bodies_share_one_view(tmp_path: Path, monkeypatch) -> None:
     """Files whose bodies sit at different nested paths form one view once each body moves onto the spawned prim."""
+    pytest.importorskip("isaacsim.asset.transformer")
+    from isaaclab.sim.spawners.wrappers import wrappers_cfg
+
+    monkeypatch.setattr(wrappers_cfg, "ISAAC_NUCLEUS_DIR", str(tmp_path))
+    simready_dir = tmp_path / "SimReady"
+    simready_dir.mkdir()
     masses = [0.3, 0.7]
-    spawn_cfg = sim_utils.MultiAssetSpawnerCfg(
-        assets_cfg=[
-            sim_utils.UsdFileCfg(usd_path=_nested_body_usd(tmp_path, f"body_{i}", mass), move_rigid_body_to_root=True)
-            for i, mass in enumerate(masses)
-        ]
+    paths = [Path(_nested_body_usd(simready_dir, f"body_{i}", mass)).name for i, mass in enumerate(masses)]
+    search = {"limit": len(masses)}
+    cache = tmp_path / "search.json"
+    cache.write_text(json.dumps({"search": search, "usd_paths": paths}))
+    spawn_cfg = sim_utils.SimReadyUsdFileCfg(
+        search=search,
+        cache_file=str(cache),
+        transformer=sim_utils.TransformerCfg(profile="relocate_rigid_body_to_root"),
     )
     scene_cfg = InteractiveSceneCfg(num_envs=2, env_spacing=1.0)
     scene_cfg.object = RigidObjectCfg(prim_path="{ENV_REGEX_NS}/Object", spawn=spawn_cfg)

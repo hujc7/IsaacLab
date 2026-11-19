@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Kitless coverage of moving an asset's nested rigid body onto the spawned prim."""
+"""Kitless coverage of the USD spawner's Asset Transformer profile."""
 
 import pytest
 
@@ -20,6 +20,7 @@ def _write_asset(
     second_body=False,
     static_collider=False,
     instanced_body=False,
+    use_variants=False,
 ) -> str:
     """Write an asset whose rigid body sits at ``/Root/Geometry/body`` above a collider with its own mass.
 
@@ -46,26 +47,42 @@ def _write_asset(
     geometry = UsdGeom.Scope.Define(stage, "/Root/Geometry").GetPrim()
     geometry.GetReferences().AddInternalReference("/Prototype")
     geometry.SetInstanceable(instanced_body)
+    if use_variants:
+        physics = stage.GetDefaultPrim().GetVariantSets().AddVariantSet("physics")
+        physics.AddVariant("enabled")
+        physics.AddVariant("disabled")
+        physics.SetVariantSelection("disabled")
+        with physics.GetVariantEditContext():
+            # Deactivate the body in the source's default variant.
+            stage.OverridePrim("/Root/Geometry").SetActive(False)
     stage.Save()
     return str(path)
 
 
 @pytest.fixture
 def stage():
-    return Usd.Stage.CreateInMemory()
+    pytest.importorskip("isaacsim.asset.transformer")
+    stage = Usd.Stage.CreateInMemory()
+    with sim_utils.use_stage(stage):
+        yield stage
 
 
-def _reference(stage, asset_path: str) -> Usd.Prim:
-    prim = stage.DefinePrim("/World/Object", "Xform")
-    prim.GetReferences().AddReference(asset_path)
-    return prim
+def _spawn(asset: str, **kwargs) -> Usd.Prim:
+    cfg = sim_utils.UsdFileCfg(
+        usd_path=asset,
+        transformer=sim_utils.TransformerCfg(profile="relocate_rigid_body_to_root"),
+        **kwargs,
+    )
+    return cfg.func("/World/Object", cfg)
 
 
 def test_moves_body_schemas_and_values_onto_prim(stage, tmp_path):
-    """The body and its own mass move onto the prim; the collider keeps its collider mass."""
-    prim = _reference(stage, _write_asset(tmp_path / "asset.usda"))
-
-    sim_utils.move_rigid_body_to_root("/World/Object", stage=stage)
+    """Convert the chosen variant and instance while preserving each collider and the original file."""
+    asset = _write_asset(tmp_path / "asset.usda", instanced_body=True, use_variants=True)
+    original = (tmp_path / "asset.usda").read_bytes()
+    prim = _spawn(asset, make_uninstanceable=True, variants={"physics": "enabled"})
+    assert prim.GetVariantSets().GetVariantSelection("physics") == "enabled"
+    assert (tmp_path / "asset.usda").read_bytes() == original
 
     body = stage.GetPrimAtPath("/World/Object/Geometry/body")
     collider = stage.GetPrimAtPath("/World/Object/Geometry/body/collider")
@@ -89,16 +106,16 @@ def test_moves_body_schemas_and_values_onto_prim(stage, tmp_path):
 def test_refuses_moves_that_change_physics(stage, tmp_path, asset_kwargs, match):
     """A move that would merge bodies, make a static collider part of the body, or edit an instance proxy is
     refused."""
-    _reference(stage, _write_asset(tmp_path / "asset.usda", **asset_kwargs))
+    asset = _write_asset(tmp_path / "asset.usda", **asset_kwargs)
 
-    with pytest.raises(ValueError, match=match):
-        sim_utils.move_rigid_body_to_root("/World/Object", stage=stage)
+    with pytest.raises(RuntimeError, match=match):
+        _spawn(asset)
+    assert not stage.GetPrimAtPath("/World/Object")
 
 
 def test_moves_offset_body_and_keeps_its_center_of_mass(stage, tmp_path):
     """An offset body moves onto the prim, and its center of mass keeps its place in the prim frame."""
     asset = _write_asset(tmp_path / "asset.usda", body_offset=(0.0, 0.0, 0.1), center_of_mass=(0.01, 0.0, 0.0))
-    prim = _reference(stage, asset)
-    sim_utils.move_rigid_body_to_root("/World/Object", stage=stage)
+    prim = _spawn(asset)
     assert prim.HasAPI(UsdPhysics.RigidBodyAPI)
     assert UsdPhysics.MassAPI(prim).GetCenterOfMassAttr().Get() == pytest.approx((0.01, 0.0, 0.1))
